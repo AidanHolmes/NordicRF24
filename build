@@ -1,0 +1,3 @@
+#!/bin/sh
+
+g++ rpinrf24.cpp -I../hardware -L../hardware -lpihw -lwiringPi -o out
