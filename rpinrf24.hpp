@@ -16,6 +16,7 @@
 #define __NORDIC_RF24
 
 #include "hardware.hpp"
+#include <vector>
 #define MAX_RXTXBUF 33
 #define RF24_PIPES 6
 #define RF24_250KBPS 1
@@ -36,10 +37,13 @@
 class NordicRF24{
 public:
   NordicRF24();
+  ~NordicRF24() ;
   bool set_spi(IHardwareSPI *pSPI);
 
   void auto_update(bool update){m_auto_update = update;}
 
+  bool set_gpio(IHardwareGPIO *pGPIO, uint8_t ce, uint8_t irq) ;
+  
   // Reading data functions
   uint8_t get_rx_data_size(uint8_t pipe) ;
   bool read_payload(uint8_t *buffer, uint8_t len) ;
@@ -197,9 +201,12 @@ protected:
   bool write_register(uint8_t addr, uint8_t *val, uint8_t len);
   bool enable_features(bool enable) ; // Should this be public?
   void convert_status(uint8_t status) ;
+  static void interrupt() ;
 
   IHardwareSPI *m_pSPI ;
+  IHardwareGPIO *m_pGPIO ;
   uint8_t m_rxbuf[MAX_RXTXBUF], m_txbuf[MAX_RXTXBUF] ;
+  uint8_t m_irq, m_ce;
 
   bool m_auto_update ; 
   bool m_is_plus ; // Is this a plus model or standard?
@@ -248,5 +255,6 @@ private:
 
 } ;
 
+static std::vector<NordicRF24*> radio_instances ;
 
 #endif

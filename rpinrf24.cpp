@@ -60,10 +60,48 @@
 #define REG_DYNPD 0x1C
 #define REG_FEATURE 0x1D
 
+#include <unistd.h>
+
+
+void NordicRF24::interrupt()
+{
+  uint8_t buffer[MAX_RXTXBUF+1] ;
+
+  for (std::vector<NordicRF24*>::iterator i = radio_instances.begin(); i != radio_instances.end(); i++){
+    (*i)->read_status() ;
+    printf("STATUS:\t\tReceived=%s, Transmitted=%s, Max Retry=%s, RX Pipe Ready=%d, Transmit Full=%s\n",
+	   (*i)->has_received_data()?"YES":"NO",
+	   (*i)->has_data_sent()?"YES":"NO",
+	   (*i)->is_at_max_retry_limit()?"YES":"NO",
+	   (*i)->get_pipe_available(),
+	   (*i)->is_transmit_full()?"YES":"NO"
+	   );
+    
+    if ((*i)->has_received_data()){
+      uint8_t size = (*i)->get_rx_data_size(0) ;
+      (*i)->read_payload(buffer, size) ;
+      buffer[size] = '\0' ;
+      fprintf(stdout, "Pipe %d: %s hex{", (*i)->get_pipe_available(), buffer) ;
+      for (uint8_t i=0; i<size;i++){
+	fprintf(stdout, " %X ", buffer[i]) ;
+      }
+      fprintf(stdout, "}\n") ;
+    }else{
+      fprintf(stdout, "Other IRQ interrupt\n") ;
+    }
+    
+    (*i)->flushtx() ;
+    (*i)->flushrx() ;
+    (*i)->clear_interrupts() ;
+  }
+}
 
 NordicRF24::NordicRF24()
 {
   m_pSPI = NULL ;
+  m_pGPIO = NULL ;
+  m_irq = 0;
+  m_ce = 0 ;
   m_auto_update = true ;
   m_is_plus = true ;
 
@@ -107,6 +145,50 @@ NordicRF24::NordicRF24()
   m_en_dyn_payload = false ;
   m_en_ack_payload = false ;
   m_en_dyn_ack = false ;
+
+  // Support for multi instances but this is theoretical and
+  // not practical since the hardware is a single instance.
+  // Assumes single IRQ being used but multi instances will likely use a
+  // separate IRQ GPIO pin. This just means that interrupts will unnecessarily
+  // be called. 
+  radio_instances.push_back(this) ;  
+}
+NordicRF24::~NordicRF24()
+{
+  // Support for multi-instances but isn't thread safe or practical since
+  // hardware is a single instance
+  for (std::vector<NordicRF24*>::iterator i; i != radio_instances.end(); i++){
+    if (*i == this){
+      radio_instances.erase(i) ;
+      break;
+    }
+  }
+}
+
+bool NordicRF24::set_gpio(IHardwareGPIO *pGPIO, uint8_t ce, uint8_t irq)
+{
+  if (!pGPIO) return false ;
+  m_pGPIO = pGPIO ;
+  m_irq = irq;
+  m_ce = ce ;
+
+  if (!pGPIO->setup(m_ce, IHardwareGPIO::gpio_output)){
+    fprintf(stderr, "Cannot set GPIO output pin for CE\n") ;
+    return false ;
+  }
+  pGPIO->output(m_ce, IHardwareGPIO::low) ;
+
+  if (!pGPIO->setup(m_irq, IHardwareGPIO::gpio_input)){
+    fprintf(stderr, "Cannot set GPIO input pin for IRQ\n") ;
+    return false ;
+  }
+
+  if (!pGPIO->register_interrupt(m_irq, IHardwareGPIO::falling, interrupt)){
+    fprintf(stderr, "Cannot set GPIO interrupt pin for IRQ\n") ;
+    return false ;
+  }
+  
+  return true ;
 }
 
 bool NordicRF24::set_spi(IHardwareSPI *pSPI)
@@ -637,44 +719,11 @@ uint8_t NordicRF24::get_channel()
 }
 
 
-#include <unistd.h>
-// Global radio instance
-NordicRF24 radio ;
-
-
-void interrupt()
-{
-  uint8_t buffer[MAX_RXTXBUF+1] ;
-
-  radio.read_status() ;
-  printf("STATUS:\t\tReceived=%s, Transmitted=%s, Max Retry=%s, RX Pipe Ready=%d, Transmit Full=%s\n",
-	 radio.has_received_data()?"YES":"NO",
-	 radio.has_data_sent()?"YES":"NO",
-	 radio.is_at_max_retry_limit()?"YES":"NO",
-	 radio.get_pipe_available(),
-	 radio.is_transmit_full()?"YES":"NO"
-	 );
-
-  if (radio.has_received_data()){
-    uint8_t size = radio.get_rx_data_size(0) ;
-    radio.read_payload(buffer, size) ;
-    buffer[size] = '\0' ;
-    fprintf(stdout, "Pipe %d: %s hex{", radio.get_pipe_available(), buffer) ;
-    for (uint8_t i=0; i<size;i++){
-      fprintf(stdout, " %X ", buffer[i]) ;
-    }
-    fprintf(stdout, "}\n") ;
-  }else{
-    fprintf(stdout, "Other IRQ interrupt\n") ;
-  }
-    
-  radio.flushtx() ;
-  radio.flushrx() ;
-  radio.clear_interrupts() ;
-}
 
 int main(int argc, char **argv)
 {
+  NordicRF24 radio ;
+  
   // BCM pin
   const int ce_pin = 12 ;
   const int irq_pin = 13 ;
@@ -700,20 +749,8 @@ int main(int argc, char **argv)
   // 1 MHz = 1000 KHz
   spi.setSpeed(6000000) ;
 
-  // Setup GPIO
-  if (!pi.setup(ce_pin, IHardwareGPIO::gpio_output)){
-    fprintf(stderr, "Cannot set GPIO output pin for CE\n") ;
-    return 1 ;
-  }
-  pi.output(ce_pin, IHardwareGPIO::low) ;
-
-  if (!pi.setup(irq_pin, IHardwareGPIO::gpio_input)){
-    fprintf(stderr, "Cannot set GPIO input pin for IRQ\n") ;
-    return 1 ;
-  }
-
-  if (!pi.register_interrupt(irq_pin, IHardwareGPIO::falling, interrupt)){
-    fprintf(stderr, "Cannot set GPIO interrupt pin for IRQ\n") ;
+  if (!radio.set_gpio(&pi, ce_pin, irq_pin)){
+    fprintf(stderr, "Failed to initialise GPIO\n") ;
     return 1 ;
   }
 
@@ -771,7 +808,6 @@ int main(int argc, char **argv)
     return 0 ;
     sleep(2);
   }
-  
-  
+    
   return 0 ;
 }
