@@ -818,6 +818,7 @@ int main(int argc, char **argv)
   radio.set_2_byte_crc(true) ;
 
   radio.set_payload_width(0,8) ;  // Must match senders data length
+  radio.set_payload_width(1,8) ;  // Must match senders data length
   radio.set_data_rate(RF24_250KBPS) ;
 
   radio.set_rx_address(0,rx_address, &addr_len) ;
