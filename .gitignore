@@ -1,5 +1,7 @@
 *~
 out
+rf24recv
+rf24send
 
 # Compiled Object files
 *.slo

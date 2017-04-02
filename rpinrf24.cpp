@@ -13,8 +13,6 @@
 //   limitations under the License.
 
 #include "hardware.hpp"
-#include "wpihardware.hpp"
-#include "spihardware.hpp"
 #include "rpinrf24.hpp"
 #include <stdio.h>
 #include <sys/types.h>
@@ -60,13 +58,12 @@
 #define REG_DYNPD 0x1C
 #define REG_FEATURE 0x1D
 
-#include <unistd.h>
-
 
 void NordicRF24::interrupt()
 {
-  uint8_t buffer[MAX_RXTXBUF+1] ;
-
+  bool ret = false ;
+  int handled = 0 ;
+  
   for (std::vector<NordicRF24*>::iterator i = radio_instances.begin(); i != radio_instances.end(); i++){
     (*i)->read_status() ;
     printf("STATUS:\t\tReceived=%s, Transmitted=%s, Max Retry=%s, RX Pipe Ready=%d, Transmit Full=%s\n",
@@ -78,22 +75,57 @@ void NordicRF24::interrupt()
 	   );
     
     if ((*i)->has_received_data()){
-      uint8_t size = (*i)->get_rx_data_size(0) ;
-      (*i)->read_payload(buffer, size) ;
-      buffer[size] = '\0' ;
-      fprintf(stdout, "Pipe %d: %s hex{", (*i)->get_pipe_available(), buffer) ;
-      for (uint8_t i=0; i<size;i++){
-	fprintf(stdout, " %X ", buffer[i]) ;
-      }
-      fprintf(stdout, "}\n") ;
+      ret =(*i)->data_received_interrupt();
+    }else if((*i)->has_data_sent()){
+      ret = (*i)->data_sent_interrupt();
+    }else if ((*i)->is_at_max_retry_limit()){
+      ret = (*i)->max_retry_interrupt() ;
     }else{
       fprintf(stdout, "Other IRQ interrupt\n") ;
     }
-    
-    (*i)->flushtx() ;
-    (*i)->flushrx() ;
-    (*i)->clear_interrupts() ;
+    if (ret){
+      // this return can be used to limit the work done
+      // and attempting to call to other instances.
+      // For now this will not be used to limit and all instances will be
+      // notified
+      handled++ ;
+      ret = false;
+    }
   }
+  fprintf(stdout, "Interrupt handled %d times\n", handled) ;
+  // Only flush once using the first instance in the registered list
+  // of instances
+  (*radio_instances.begin())->flushtx() ;
+  (*radio_instances.begin())->flushrx() ;
+  (*radio_instances.begin())->clear_interrupts() ;
+  
+}
+bool NordicRF24::max_retry_interrupt()
+{
+  fprintf(stdout,"Max retries reached\n") ;
+  return true ;
+}
+
+bool NordicRF24::data_sent_interrupt()
+{
+  fprintf(stdout, "ACK received\n") ;
+  return true ;
+}
+
+bool NordicRF24::data_received_interrupt()
+{
+  uint8_t buffer[MAX_RXTXBUF+1] ;
+
+  uint8_t size = get_rx_data_size(0) ;
+  read_payload(buffer, size) ;
+  buffer[size] = '\0' ;
+  fprintf(stdout, "Pipe %d: %s hex{", get_pipe_available(), buffer) ;
+  for (uint8_t i=0; i<size;i++){
+    fprintf(stdout, " %X ", buffer[i]) ;
+  }
+  fprintf(stdout, "}\n") ;
+
+  return true;
 }
 
 NordicRF24::NordicRF24()
@@ -103,6 +135,68 @@ NordicRF24::NordicRF24()
   m_irq = 0;
   m_ce = 0 ;
   m_auto_update = true ;
+
+  // Support for multi instances but this is theoretical and
+  // not practical since the hardware is a single instance.
+  // Assumes single IRQ being used but multi instances will likely use a
+  // separate IRQ GPIO pin. This just means that interrupts will unnecessarily
+  // be called. 
+  radio_instances.push_back(this) ;  
+  
+  reset_class() ;
+}
+
+bool NordicRF24::reset_rf24()
+{
+  uint8_t addr1[5] = {0xE7,0xE7,0xE7,0xE7,0xE7} ;
+  uint8_t addr2[5] = {0xC2,0xC2,0xC2,0xC2,0xC2} ;
+  uint8_t buf = 0;
+  if (!m_pGPIO) return false ;
+  if (!m_pGPIO->output(m_ce, IHardwareGPIO::low)) return false ;
+  
+  if (!m_pSPI) return false ;
+  buf = 0x08 ;
+  if (!write_register(REG_CONFIG,&buf,1)) return false ;
+  buf = 0x3F ;
+  if (!write_register(REG_EN_AA,&buf,1)) return false ;
+  buf = 0x03 ;
+  if (!write_register(REG_EN_RXADDR,&buf,1)) return false ;
+  buf = 0x03 ;
+  if (!write_register(REG_SETUP_AW,&buf,1)) return false ;
+  buf = 0x03 ;
+  if (!write_register(REG_SETUP_RETR,&buf,1)) return false ;
+  buf = 0x02 ;
+  if (!write_register(REG_RF_CH,&buf,1)) return false ;
+  buf = 0x06 ;
+  if (!write_register(REG_RF_SETUP,&buf,1)) return false ;
+  if (!write_register(REG_RX_ADDR_BASE,addr1,5)) return false ;
+  if (!write_register(REG_RX_ADDR_BASE+1,addr2,5)) return false ;
+  buf = 0xC3 ;
+  if (!write_register(REG_RX_ADDR_BASE+2,&buf,1)) return false ;
+  buf = 0xC4 ;
+  if (!write_register(REG_RX_ADDR_BASE+3,&buf,1)) return false ;
+  buf = 0xC5 ;
+  if (!write_register(REG_RX_ADDR_BASE+4,&buf,1)) return false ;
+  buf = 0xC6 ;
+  if (!write_register(REG_RX_ADDR_BASE+5,&buf,1)) return false ;
+  if (!write_register(REG_TX_ADDR,addr1,5)) return false ;
+  buf = 0x00 ;
+  if (!write_register(REG_RX_PW_BASE,&buf,1)) return false ;
+  if (!write_register(REG_RX_PW_BASE+1,&buf,1)) return false ;
+  if (!write_register(REG_RX_PW_BASE+2,&buf,1)) return false ;
+  if (!write_register(REG_RX_PW_BASE+3,&buf,1)) return false ;
+  if (!write_register(REG_RX_PW_BASE+4,&buf,1)) return false ;
+  if (!write_register(REG_RX_PW_BASE+5,&buf,1)) return false ;
+  if (!write_register(REG_DYNPD,&buf,1)) return false ;
+  if (!write_register(REG_FEATURE,&buf,1)) return false ;
+
+  reset_class() ;
+  
+  return true ;
+}
+
+void NordicRF24::reset_class()
+{
   m_is_plus = true ;
 
   // Config register defaults
@@ -117,7 +211,8 @@ NordicRF24::NordicRF24()
   
   for(int i=0; i < RF24_PIPES; i++){
     m_en_aa[i] = true ; // Set auto ack defaults on all pipes
-    m_enable_pipe[i] = true ;
+    if (i <= 1) m_enable_pipe[i] = true ;
+    else m_enable_pipe[i] = false;
     m_dyn_payload[i] = false ;
   }
 
@@ -146,12 +241,6 @@ NordicRF24::NordicRF24()
   m_en_ack_payload = false ;
   m_en_dyn_ack = false ;
 
-  // Support for multi instances but this is theoretical and
-  // not practical since the hardware is a single instance.
-  // Assumes single IRQ being used but multi instances will likely use a
-  // separate IRQ GPIO pin. This just means that interrupts will unnecessarily
-  // be called. 
-  radio_instances.push_back(this) ;  
 }
 NordicRF24::~NordicRF24()
 {
@@ -235,6 +324,26 @@ bool NordicRF24::read_payload(uint8_t *buffer, uint8_t len)
   return true ;
 }
 
+bool NordicRF24::write_payload(uint8_t *buffer, uint8_t len)
+{
+  if (!m_pSPI) return false ; // No SPI interface
+  // Check if receiving or transmitting.
+  if (m_prim_rx) return false ;
+
+  if (buffer == NULL || len > 32) return false ;
+
+  *m_txbuf = W_TX_PAYLOAD ;
+  memcpy(m_txbuf+1, buffer, len) ;
+  if (!m_pSPI->write(m_txbuf, len+1)) return false ;
+  if (!m_pSPI->read(m_rxbuf, len+1)) return false ;
+  convert_status(*m_rxbuf) ;
+  return true ;  
+}
+
+bool NordicRF24::send(uint8_t *buffer, uint8_t len)
+{
+  return false;
+}
 
 bool NordicRF24::read_register(uint8_t addr, uint8_t *val, uint8_t len)
 {
@@ -527,6 +636,7 @@ bool NordicRF24::get_rx_address(uint8_t pipe, uint8_t *address, uint8_t *len)
     if (!read_register(REG_RX_ADDR_BASE+1, full_address, address_width))
       return false;
     if (!read_register(REG_RX_ADDR_BASE+pipe, &low_byte, 1)) return false ;
+    full_address[0] = low_byte ;
     memcpy(address, full_address, *len);
     return true ;  
   } 
@@ -718,144 +828,5 @@ uint8_t NordicRF24::get_channel()
   return reg ;
 }
 
-void print_state(NordicRF24 *pRadio)
-{
-  int i=0 ;
-  uint8_t addr_width = pRadio->get_address_width() ;
-  uint8_t address[5], w=0 ;
-  
-  printf("Data Ready Interrupt: %s\n", pRadio->use_interrupt_data_ready()?"true":"false") ;
-  printf("Data Sent Interrupt: %s\n", pRadio->use_interrupt_data_sent()?"true":"false") ;
-  printf("Max Retry Interrupt: %s\n", pRadio->use_interrupt_max_retry()?"true":"false") ;
-  printf("CRC Enabled: %s\n", pRadio->is_crc_enabled()?"true":"false") ;
-  printf("Is Powered Up: %s\n", pRadio->is_powered_up()?"true":"false") ;
-  printf("Is Receiver: %s\n", pRadio->is_receiver()?"true":"false") ;
-  printf("2 byte CRC: %s\n", pRadio->is_2_byte_crc()?"true":"false") ;
-  printf("Address Width: %d\n", addr_width);
-  printf("Retry Delay: %d\n", pRadio->get_retry_delay()) ;
-  printf("Retry Count: %d\n", pRadio->get_retry_count()) ;
-  printf("Channel: %d\n", pRadio->get_channel()) ;
-  printf("Power Level: %d\n",pRadio->get_power_level());
-  printf("Data Rate: %d\n",pRadio->get_data_rate());
-  printf("Continuous Carrier: %s\n", pRadio->is_continuous_carrier_transmit()?"true":"false") ;
-  printf("Dynamic Payloads: %s\n", pRadio->dynamic_payloads_enabled()?"true":"false") ;
-  printf("Payload ACK: %s\n", pRadio->payload_ack_enabled()?"true":"false") ;
-  printf("TX No ACK: %s\n", pRadio->tx_noack_cmd_enabled()?"true":"false") ;
-  
-  for (i=0; i < RF24_PIPES;i++){
-    printf("Pipe %d Enabled: %s\n", i, pRadio->is_pipe_enabled(i)?"true":"false") ;
-    printf("Pipe %d ACK: %s\n", i, pRadio->is_pipe_ack(i)?"true":"false") ;
-    pRadio->get_rx_address(i, address, &addr_width) ;
-    printf("Pipe %d Address: [", i) ;
-    for (int j=0; j < addr_width; j++){
-      printf(" %X ",address[j]) ;
-    }
-    printf("]\n");
-    pRadio->get_payload_width(i, &w) ;
-    printf("Pipe %d Payload Width: %d\n", i,w) ;
-    printf("Pipe %d Dynamic Payloads: %s\n\n", i, pRadio->is_dynamic_payload(i)?"true":"false") ;
-  }
 
-  pRadio->get_tx_address(address,&addr_width) ;
-  printf("Transmit Address: [", i) ;
-  for(int j=0; j < addr_width; j++){
-    printf(" %X ",address[j]) ;
-  }
-  printf("]\n");
-  
-}
 
-int main(int argc, char **argv)
-{
-  NordicRF24 radio ;
-  
-  // BCM pin
-  const int ce_pin = 12 ;
-  const int irq_pin = 13 ;
-  
-  // Create new wiringPi instance
-  wPi pi ; // init GPIO
-
-  // Create spidev instance. wiringPi interface doesn't seem to work
-  // The SPIDEV code has more configuration to handle devices. 
-  spiHw spi ;
-
-  // Pi has only one bus available on the user pins. 
-  // Two devices 0,0 and 0,1 are available (CS0 & CS1). 
-  if (!spi.spiopen(0,0)){ // init SPI
-    fprintf(stderr, "Cannot Open SPI\n") ;
-    return 1;
-  }
-
-  spi.setCSHigh(false) ;
-  spi.setMode(0) ;
-
-  // 1 KHz = 1000 Hz
-  // 1 MHz = 1000 KHz
-  spi.setSpeed(6000000) ;
-
-  if (!radio.set_gpio(&pi, ce_pin, irq_pin)){
-    fprintf(stderr, "Failed to initialise GPIO\n") ;
-    return 1 ;
-  }
-
-  fprintf(stdout, "IRQ is set to %s\n", (pi.input(irq_pin)==IHardwareGPIO::low)?"LOW":"HIGH");
-  
-  // Create the radio instance
-
-  uint8_t rx_address[5] = {0xC2,0xC2,0xC2,0xC2,0xC2} ;
-  uint8_t tx_address[5] = {0xE7,0xE7,0xE7,0xE7,0xE7} ;
-  uint8_t addr_len = 5 ;
-  
-  radio.set_spi(&spi) ;
-  radio.auto_update(true);
-  if (!radio.set_address_width(addr_len)) fprintf(stderr, "Cannot set_address_width\n") ;
-  radio.set_retry(15,15);
-  radio.set_channel(0x60) ;
-  radio.set_pipe_ack(0,true) ;
-  radio.set_power_level(RF24_0DBM) ;
-  radio.crc_enabled(true) ;
-  radio.set_2_byte_crc(true) ;
-
-  radio.set_payload_width(0,8) ;  // Must match senders data length
-  radio.set_payload_width(1,8) ;  // Must match senders data length
-  radio.set_data_rate(RF24_250KBPS) ;
-
-  radio.set_rx_address(0,rx_address, &addr_len) ;
-  radio.set_tx_address(tx_address, &addr_len) ;
-
-  radio.receiver(true) ;
-  radio.power_up(true) ;
-  sleep(1) ; // or 130 micro sec
-
-  radio.flushrx();
-  radio.flushtx();
-  radio.clear_interrupts() ;
-  pi.output(ce_pin, IHardwareGPIO::high) ;
-
-  print_state(&radio) ;
-
-  for (;;){
-    // Do nothing
-    
-    // get the status
-    uint8_t status = 0, NOP = RF24_NOP ;
-    /*    
-    radio.read_status();
-
-    printf("STATUS:\t\tReceived=%s, Transmitted=%s, Max Retry=%s, RX Pipe Ready=%d, Transmit Full=%s\n",
-	   radio.has_received_data()?"YES":"NO",
-	   radio.has_data_sent()?"YES":"NO",
-	   radio.is_at_max_retry_limit()?"YES":"NO",
-	   radio.get_pipe_available(),
-	   radio.is_transmit_full()?"YES":"NO"
-	   );
-    */
-    scanf("%c", &status);
-    pi.output(ce_pin, IHardwareGPIO::low) ;
-    return 0 ;
-    sleep(2);
-  }
-    
-  return 0 ;
-}

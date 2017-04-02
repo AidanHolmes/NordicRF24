@@ -38,15 +38,19 @@ class NordicRF24{
 public:
   NordicRF24();
   ~NordicRF24() ;
+  bool reset_rf24() ;
   bool set_spi(IHardwareSPI *pSPI);
 
   void auto_update(bool update){m_auto_update = update;}
 
   bool set_gpio(IHardwareGPIO *pGPIO, uint8_t ce, uint8_t irq) ;
+
+  bool send(uint8_t *buffer, uint8_t len);
   
   // Reading data functions
   uint8_t get_rx_data_size(uint8_t pipe) ;
   bool read_payload(uint8_t *buffer, uint8_t len) ;
+  bool write_payload(uint8_t *buffer, uint8_t len) ;
   
   // Configuration settings
   bool read_config();
@@ -197,11 +201,15 @@ public:
   bool flushrx();
 
 protected:
+  void reset_class() ;
   bool read_register(uint8_t addr, uint8_t *val, uint8_t len);
   bool write_register(uint8_t addr, uint8_t *val, uint8_t len);
   bool enable_features(bool enable) ; // Should this be public?
   void convert_status(uint8_t status) ;
   static void interrupt() ;
+  virtual bool max_retry_interrupt() ;
+  virtual bool data_sent_interrupt() ;
+  virtual bool data_received_interrupt() ;
 
   IHardwareSPI *m_pSPI ;
   IHardwareGPIO *m_pGPIO ;
@@ -250,7 +258,8 @@ protected:
   bool m_en_dyn_payload ;
   bool m_en_ack_payload ;
   bool m_en_dyn_ack ;
-  
+
+  uint8_t m_read_buffer[];
 private:
 
 } ;
