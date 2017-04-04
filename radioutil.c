@@ -1,5 +1,7 @@
 #include "radioutil.h"
 #include <stdio.h>
+#include <time.h>
+#include <errno.h>
 
 void print_state(NordicRF24 *pRadio)
 {
@@ -46,4 +48,15 @@ void print_state(NordicRF24 *pRadio)
   }
   printf("]\n");
   
+}
+
+void nano_sleep(time_t sec, long nano)
+{
+  struct timespec ts,trem ;
+  ts.tv_sec = sec ;
+  ts.tv_nsec = nano ;
+
+  while (nanosleep(ts, &trem) == -1 && errno == EINTR){
+    ts=trem ;
+  }
 }

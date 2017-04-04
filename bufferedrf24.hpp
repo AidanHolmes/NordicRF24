@@ -16,7 +16,7 @@
 #define __BUFFERED_NORDIC_RF24
 
 #define RF24_BUFFER_READ 1600
-#define RF24_BUFFER_WRTIE 1600
+#define RF24_BUFFER_WRITE 1600
 
 #include "rpinrf24.hpp"
 
@@ -26,11 +26,16 @@ public:
   ~BufferedRF24();
 
   uint16_t write(uint8_t *buffer, uint16_t length, bool blocking) ;
+  uint16_t read(uint8_t *buffer, uint16_t length, bool blocking) ;
   
 protected:
+  uint8_t m_read_buffer[RF24_BUFFER_READ];
+  uint8_t m_write_buffer[RF24_BUFFER_WRITE];
+  uint16_t m_read_size ;
+  uint16_t m_write_size ;
   
 private:
-
+  
   
 };
 

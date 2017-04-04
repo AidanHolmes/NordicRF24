@@ -65,7 +65,7 @@ void NordicRF24::interrupt()
   int handled = 0 ;
   
   for (std::vector<NordicRF24*>::iterator i = radio_instances.begin(); i != radio_instances.end(); i++){
-    (*i)->read_status() ;
+    if (!(*i)->read_status()) continue ; // Cannot handle interrupt if call failed
     printf("STATUS:\t\tReceived=%s, Transmitted=%s, Max Retry=%s, RX Pipe Ready=%d, Transmit Full=%s\n",
 	   (*i)->has_received_data()?"YES":"NO",
 	   (*i)->has_data_sent()?"YES":"NO",
@@ -116,7 +116,7 @@ bool NordicRF24::data_received_interrupt()
 {
   uint8_t buffer[MAX_RXTXBUF+1] ;
 
-  uint8_t size = get_rx_data_size(0) ;
+  uint8_t size = get_rx_data_size(get_pipe_available()) ;
   read_payload(buffer, size) ;
   buffer[size] = '\0' ;
   fprintf(stdout, "Pipe %d: %s hex{", get_pipe_available(), buffer) ;
