@@ -19,6 +19,7 @@
 #define RF24_BUFFER_WRITE 1600
 
 #include "rpinrf24.hpp"
+#include <pthread.h>
 
 class BufferedRF24 : public NordicRF24{
 public:
@@ -27,15 +28,19 @@ public:
 
   uint16_t write(uint8_t *buffer, uint16_t length, bool blocking) ;
   uint16_t read(uint8_t *buffer, uint16_t length, bool blocking) ;
-  
+
 protected:
+  bool data_received_interrupt() ;
+  bool max_retry_interrupt();
+  bool data_sent_interrupt();
+
   uint8_t m_read_buffer[RF24_BUFFER_READ];
   uint8_t m_write_buffer[RF24_BUFFER_WRITE];
-  uint16_t m_read_size ;
-  uint16_t m_write_size ;
+  uint16_t m_read_size, m_front_read ;
+  uint16_t m_write_size, m_front_write ;
   
 private:
-  
+  pthread_mutex_t m_rwlock ;  
   
 };
 

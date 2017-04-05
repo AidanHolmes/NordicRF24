@@ -168,6 +168,9 @@ public:
   // returns false if width is out of range
   bool set_payload_width(uint8_t pipe, uint8_t width);
 
+  uint8_t get_transmit_width(){return m_transmit_width;}
+  bool set_transmit_width(uint8_t width){if (width > 32) return false ;m_transmit_width = width; return true;}
+
   // Fifo-status register
   bool read_fifo_status() ;
   // GET calls
@@ -260,6 +263,8 @@ protected:
   bool m_en_dyn_ack ;
 
   uint8_t m_read_buffer[];
+
+  uint8_t m_transmit_width ;
 private:
 
 } ;

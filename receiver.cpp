@@ -16,12 +16,13 @@
 #include "wpihardware.hpp"
 #include "spihardware.hpp"
 #include "radioutil.h"
+#include "bufferedrf24.hpp"
 #include <stdio.h>
 #include <unistd.h>
 
 int main(int argc, char **argv)
 {
-  NordicRF24 radio ;
+  BufferedRF24 radio ;
   
   // BCM pin
   const int ce_pin = 12 ;
@@ -91,17 +92,20 @@ int main(int argc, char **argv)
 
   print_state(&radio) ;
 
+  uint8_t buffer[8] ;
   for (;;){
-    // Do nothing
-    
-    uint8_t status = 0;
+    radio.read(buffer, 8, true) ;
+    buffer[7] = '\0' ;
+    fprintf(stdout, "DATA: %s hex{", buffer) ;
+    for (uint8_t i=0; i<8;i++){
+      fprintf(stdout, " %X ", buffer[i]) ;
+    }
+    fprintf(stdout, "}\n") ;
 
-    // Wait for character on command line to quit
-    scanf("%c", &status);
-    pi.output(ce_pin, IHardwareGPIO::low) ;
-    return 0 ;
-    sleep(2);
+    
+    //sleep(1);
   }
+  pi.output(ce_pin, IHardwareGPIO::low) ;
     
   return 0 ;
 }

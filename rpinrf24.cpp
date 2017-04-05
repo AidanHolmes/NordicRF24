@@ -65,7 +65,11 @@ void NordicRF24::interrupt()
   int handled = 0 ;
   
   for (std::vector<NordicRF24*>::iterator i = radio_instances.begin(); i != radio_instances.end(); i++){
-    if (!(*i)->read_status()) continue ; // Cannot handle interrupt if call failed
+    ret = (*i)->read_status() ;
+    if (!ret){
+      printf("Failed to read status in interrupt handler\n") ;
+      continue ; // Cannot handle interrupt if call failed
+    }
     printf("STATUS:\t\tReceived=%s, Transmitted=%s, Max Retry=%s, RX Pipe Ready=%d, Transmit Full=%s\n",
 	   (*i)->has_received_data()?"YES":"NO",
 	   (*i)->has_data_sent()?"YES":"NO",
@@ -140,7 +144,7 @@ NordicRF24::NordicRF24()
   // not practical since the hardware is a single instance.
   // Assumes single IRQ being used but multi instances will likely use a
   // separate IRQ GPIO pin. This just means that interrupts will unnecessarily
-  // be called. 
+  // be called.
   radio_instances.push_back(this) ;  
   
   reset_class() ;
@@ -197,6 +201,8 @@ bool NordicRF24::reset_rf24()
 
 void NordicRF24::reset_class()
 {
+  m_transmit_width = 32 ;
+  
   m_is_plus = true ;
 
   // Config register defaults
@@ -348,14 +354,15 @@ bool NordicRF24::send(uint8_t *buffer, uint8_t len)
 bool NordicRF24::read_register(uint8_t addr, uint8_t *val, uint8_t len)
 {
   const uint16_t addmask = 0x01FF;
-  if (!m_pSPI) return false ;
+  if (!m_pSPI){return false ;}
 
   addr &= addmask ;
   *m_txbuf = addr ;
-  if (!m_pSPI->write(m_txbuf, len+1)) return false ;
-  if (!m_pSPI->read(m_rxbuf, len+1)) return false ;
+  if (!m_pSPI->write(m_txbuf, len+1)) {return false ;}
+  if (!m_pSPI->read(m_rxbuf, len+1)) {return false ;}
   memcpy(val, m_rxbuf+1, len) ;
   convert_status(*m_rxbuf) ;
+
   return true ;
 }
 
@@ -575,8 +582,10 @@ bool NordicRF24::is_transmit_full()
 bool NordicRF24::read_status()
 {
   uint8_t reg = 0 ;
+
   if (!read_register(REG_STATUS, &reg, 1)) return false ;
   convert_status(reg) ;
+  return true ;
 }
 
 bool NordicRF24::clear_interrupts()

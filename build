@@ -1,6 +1,6 @@
 #!/bin/sh
 
 g++ -g -c rpinrf24.cpp -I../hardware -L../hardware
-g++ -g -c bufferednrf24.cpp -I../hardware -L../hardware
+g++ -g -c bufferedrf24.cpp -I../hardware -L../hardware
 g++ -g -c radioutil.c -I../hardware -L../hardware
-g++ -g receiver.cpp rpinrf24.o radioutil.o -I../hardware -L../hardware -lpihw -lwiringPi -o rf24recv
+g++ -g receiver.cpp bufferedrf24.o rpinrf24.o radioutil.o -I../hardware -L../hardware -lpihw -lwiringPi -o rf24recv

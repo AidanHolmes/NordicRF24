@@ -1,4 +1,5 @@
 #include "rpinrf24.hpp"
+#include <time.h>
 
 extern "C"
 {
