@@ -19,6 +19,7 @@
 #include "bufferedrf24.hpp"
 #include <stdio.h>
 #include <unistd.h>
+#include <string.h>
 
 int main(int argc, char **argv)
 {
@@ -92,18 +93,28 @@ int main(int argc, char **argv)
 
   print_state(&radio) ;
 
+  bool block = false;
+  if (argc > 1){
+    if (strcmp("-b", argv[1]) == 0){
+      block = true;
+      printf("blocking\n");
+    }
+  }
+
   uint8_t buffer[8] ;
   for (;;){
-    radio.read(buffer, 8, true) ;
-    buffer[7] = '\0' ;
-    fprintf(stdout, "DATA: %s hex{", buffer) ;
-    for (uint8_t i=0; i<8;i++){
-      fprintf(stdout, " %X ", buffer[i]) ;
+    uint16_t bytes = radio.read(buffer, 8, 0, block) ;
+    while(bytes){
+      buffer[7] = '\0' ;
+      fprintf(stdout, "DATA: %s hex{", buffer) ;
+      for (uint8_t i=0; i<8;i++){
+	fprintf(stdout, " %X ", buffer[i]) ;
+      }
+      fprintf(stdout, "}\n") ;
+      bytes = radio.read(buffer, 8, 0, false) ;
     }
-    fprintf(stdout, "}\n") ;
-
     
-    //sleep(1);
+    if(!block) sleep(5);
   }
   pi.output(ce_pin, IHardwareGPIO::low) ;
     

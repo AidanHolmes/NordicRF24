@@ -120,10 +120,12 @@ bool BufferedRF24::data_sent_interrupt()
   return true ;
 }
 
-uint16_t BufferedRF24::read(uint8_t *buffer, uint16_t length, bool blocking)
+uint16_t BufferedRF24::read(uint8_t *buffer, uint16_t length, uint8_t pipe, bool blocking)
 {
   uint16_t len = length ;
   uint16_t buff_size = 0 ;
+
+  if (pipe >= RF24_PIPES) return 0 ; // out of range
   
   buff_size = m_read_size - m_front_read ; 
   if (length > buff_size) len = buff_size ; // length larger than remaining buffer
@@ -140,7 +142,7 @@ uint16_t BufferedRF24::read(uint8_t *buffer, uint16_t length, bool blocking)
   
   pthread_mutex_lock(&m_rwlock) ;
 
-  memcpy(buffer, m_read_buffer+m_front_read, len) ;
+  memcpy(buffer, m_read_buffer[pipe]+m_front_read, len) ;
 
   if (length < buff_size){
     // Still buffer remaining
@@ -163,7 +165,7 @@ bool BufferedRF24::data_received_interrupt()
   uint8_t size = get_rx_data_size(pipe) ;
   while(!is_rx_empty()){
     if ((RF24_BUFFER_READ - m_read_size) < size) return false ; // no more buffer
-    if (!read_payload(m_read_buffer+m_read_size, size)) return false ; // SPI error
+    if (!read_payload(m_read_buffer[pipe]+m_read_size, size)) return false ; // SPI error
     m_read_size += size ;
   }
   return true ;

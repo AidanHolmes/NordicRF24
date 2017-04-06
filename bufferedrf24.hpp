@@ -27,14 +27,14 @@ public:
   ~BufferedRF24();
 
   uint16_t write(uint8_t *buffer, uint16_t length, bool blocking) ;
-  uint16_t read(uint8_t *buffer, uint16_t length, bool blocking) ;
+  uint16_t read(uint8_t *buffer, uint16_t length, uint8_t pipe, bool blocking) ;
 
 protected:
   bool data_received_interrupt() ;
   bool max_retry_interrupt();
   bool data_sent_interrupt();
 
-  uint8_t m_read_buffer[RF24_BUFFER_READ];
+  uint8_t m_read_buffer[RF24_PIPES][RF24_BUFFER_READ];
   uint8_t m_write_buffer[RF24_BUFFER_WRITE];
   uint16_t m_read_size, m_front_read ;
   uint16_t m_write_size, m_front_write ;
