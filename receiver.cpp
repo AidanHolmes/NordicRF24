@@ -117,6 +117,6 @@ int main(int argc, char **argv)
     if(!block) sleep(5);
   }
   pi.output(ce_pin, IHardwareGPIO::low) ;
-    
+  
   return 0 ;
 }

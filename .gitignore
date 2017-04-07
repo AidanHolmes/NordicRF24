@@ -2,6 +2,7 @@
 out
 rf24recv
 rf24send
+rf24cmd
 
 # Compiled Object files
 *.slo
