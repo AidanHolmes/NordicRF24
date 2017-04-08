@@ -38,6 +38,8 @@ class NordicRF24{
 public:
   NordicRF24();
   ~NordicRF24() ;
+  // Full hardware reset to defaults and
+  // reset of class attributes to reflect this
   bool reset_rf24() ;
   bool set_spi(IHardwareSPI *pSPI);
 

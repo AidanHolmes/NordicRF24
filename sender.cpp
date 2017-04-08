@@ -13,15 +13,17 @@
 //   limitations under the License.
 
 #include "rpinrf24.hpp"
+#include "bufferedrf24.hpp"
 #include "wpihardware.hpp"
 #include "spihardware.hpp"
 #include "radioutil.h"
 #include <stdio.h>
 #include <unistd.h>
+#include <string.h>
 
 int main(int argc, char **argv)
 {
-  NordicRF24 radio ;
+  BufferedRF24 radio ;
   
   // BCM pin
   const int ce_pin = 12 ;
@@ -47,15 +49,13 @@ int main(int argc, char **argv)
   // 1 KHz = 1000 Hz
   // 1 MHz = 1000 KHz
   spi.setSpeed(6000000) ;
+  radio.set_spi(&spi) ;
 
   if (!radio.set_gpio(&pi, ce_pin, irq_pin)){
     fprintf(stderr, "Failed to initialise GPIO\n") ;
     return 1 ;
   }
-  radio.set_spi(&spi) ;
   
-  // Create the radio instance
-
   // Transmit and receive address must match receiver address to receive ACKs
   uint8_t rx_address[5] = {0xC2,0xC2,0xC2,0xC2,0xC2} ;
   uint8_t tx_address[5] = {0xC2,0xC2,0xC2,0xC2,0xC2} ;
@@ -64,7 +64,7 @@ int main(int argc, char **argv)
   radio.auto_update(true);
   if (!radio.set_address_width(addr_len)) fprintf(stderr, "Cannot set_address_width\n") ;
   radio.set_retry(15,15);
-  radio.set_channel(0x60) ;
+  radio.set_channel(0x60) ; // 2.496GHz
   //radio.set_pipe_ack(0,true) ;
   radio.set_power_level(RF24_0DBM) ;
   radio.crc_enabled(true) ;
@@ -78,28 +78,26 @@ int main(int argc, char **argv)
   radio.set_tx_address(tx_address, &addr_len) ;
   radio.set_rx_address(0,rx_address, &addr_len) ;
 
+  radio.set_transmit_width(8);
+  
   radio.receiver(false) ;
   radio.power_up(true) ;
-  sleep(1) ; // or 130 micro sec
+  nano_sleep(0,130000) ; // 130 micro seconds
 
   radio.flushrx();
   radio.flushtx();
   radio.clear_interrupts() ;
-  //pi.output(ce_pin, IHardwareGPIO::high) ;
 
   print_state(&radio) ;
 
-  for (;;){
-    // Do nothing
-    
-    uint8_t status = 0;
+  uint8_t send_me[] = "Hello World" ;
+  //for (;;){
+  uint16_t sent = radio.write(send_me, strlen((char*)send_me), true) ;
+  printf("Blocking write returned %d\n", sent) ;
+  sleep(1);
+    //}
 
-    // Wait for character on command line to quit
-    scanf("%c", &status);
-    pi.output(ce_pin, IHardwareGPIO::low) ;
-    return 0 ;
-    sleep(2);
-  }
+  radio.reset_rf24();
     
   return 0 ;
 }

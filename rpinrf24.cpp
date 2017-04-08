@@ -70,7 +70,7 @@ void NordicRF24::interrupt()
       printf("Failed to read status in interrupt handler\n") ;
       continue ; // Cannot handle interrupt if call failed
     }
-    /*
+    
     printf("STATUS:\t\tReceived=%s, Transmitted=%s, Max Retry=%s, RX Pipe Ready=%d, Transmit Full=%s\n",
 	   (*i)->has_received_data()?"YES":"NO",
 	   (*i)->has_data_sent()?"YES":"NO",
@@ -78,7 +78,7 @@ void NordicRF24::interrupt()
 	   (*i)->get_pipe_available(),
 	   (*i)->is_transmit_full()?"YES":"NO"
 	   );
-    */
+    
     if ((*i)->has_received_data()){
       ret =(*i)->data_received_interrupt();
     }else if((*i)->has_data_sent()){
@@ -100,7 +100,7 @@ void NordicRF24::interrupt()
   //fprintf(stdout, "Interrupt handled %d times\n", handled) ;
   // Only flush once using the first instance in the registered list
   // of instances
-  (*radio_instances.begin())->flushtx() ;
+  //(*radio_instances.begin())->flushtx() ;
   (*radio_instances.begin())->flushrx() ;
   (*radio_instances.begin())->clear_interrupts() ;
   
