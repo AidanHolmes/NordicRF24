@@ -111,13 +111,13 @@ bool BufferedRF24::data_sent_interrupt()
   // Works for dynamic data packets used in Enhanced Shockburst
   if (size <= packet_size){ 
     memset(rembuf,0,32) ; // Clear
-    memcpy(rembuf, m_write_buffer, size) ; // Partial packet write
+    memcpy(rembuf, m_write_buffer+m_front_write, size) ; // Partial packet write
     printf("Writing payload of size %d\n", packet_size) ;
     write_payload(rembuf, packet_size) ;
   }else{
     // Write another packet
     printf("Writing payload of size %d\n", packet_size) ;
-    write_payload(m_write_buffer, packet_size) ;
+    write_payload(m_write_buffer+m_front_write, packet_size) ;
   }
   m_front_write += packet_size ;
   // Send the packet

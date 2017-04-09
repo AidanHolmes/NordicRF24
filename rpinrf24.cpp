@@ -123,7 +123,7 @@ bool NordicRF24::data_received_interrupt()
 
   uint8_t size = get_rx_data_size(get_pipe_available()) ;
   read_payload(buffer, size) ;
-  buffer[size] = '\0' ;
+  buffer[size+1] = '\0' ;
   fprintf(stdout, "Pipe %d: %s hex{", get_pipe_available(), buffer) ;
   for (uint8_t i=0; i<size;i++){
     fprintf(stdout, " %X ", buffer[i]) ;

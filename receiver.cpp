@@ -59,6 +59,7 @@ int main(int argc, char **argv)
   
   // Create the radio instance
 
+  const int payloadwidth = 8 ;
   uint8_t rx_address[5] = {0xC2,0xC2,0xC2,0xC2,0xC2} ;
   uint8_t tx_address[5] = {0xE7,0xE7,0xE7,0xE7,0xE7} ;
   uint8_t addr_len = 5 ;
@@ -75,7 +76,7 @@ int main(int argc, char **argv)
   radio.crc_enabled(true) ;
   radio.set_2_byte_crc(true) ;
 
-  radio.set_payload_width(0,8) ;  // Must match senders data length
+  radio.set_payload_width(0,payloadwidth) ;  // Must match senders data length
   radio.enable_pipe(1, false) ;
   radio.set_data_rate(RF24_250KBPS) ;
 
@@ -101,17 +102,17 @@ int main(int argc, char **argv)
     }
   }
 
-  uint8_t buffer[8] ;
+  uint8_t buffer[33] ;
   for (;;){
-    uint16_t bytes = radio.read(buffer, 8, 0, block) ;
+    uint16_t bytes = radio.read(buffer, payloadwidth, 0, block) ;
     while(bytes){
-      buffer[7] = '\0' ;
+      buffer[payloadwidth] = '\0' ;
       fprintf(stdout, "DATA: %s hex{", buffer) ;
-      for (uint8_t i=0; i<8;i++){
+      for (uint8_t i=0; i<payloadwidth;i++){
 	fprintf(stdout, " %X ", buffer[i]) ;
       }
       fprintf(stdout, "}\n") ;
-      bytes = radio.read(buffer, 8, 0, false) ;
+      bytes = radio.read(buffer, payloadwidth, 0, false) ;
     }
     
     if(!block) sleep(5);
