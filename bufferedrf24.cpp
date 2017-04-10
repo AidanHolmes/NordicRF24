@@ -38,13 +38,8 @@ uint16_t BufferedRF24::write(uint8_t *buffer, uint16_t length, bool blocking)
   memcpy(m_write_buffer+m_write_size, buffer, len) ;
   if (m_write_size == 0){
     // Fresh write
-    uint8_t packet_size = get_transmit_width() ;
-    m_front_write = packet_size ;
-    printf("Writing payload of size %d\n", packet_size) ;
-    write_payload(m_write_buffer, packet_size) ;
-    m_pGPIO->output(m_ce, IHardwareGPIO::high) ;
-    nano_sleep(0,10000) ; // 10 micro seconds
-    m_pGPIO->output(m_ce, IHardwareGPIO::low) ;
+    m_front_write = write_packet(m_write_buffer) ;
+    if (!m_front_write) return 0 ;
   }
 
   m_write_size += len ;
@@ -112,18 +107,12 @@ bool BufferedRF24::data_sent_interrupt()
   if (size <= packet_size){ 
     memset(rembuf,0,32) ; // Clear
     memcpy(rembuf, m_write_buffer+m_front_write, size) ; // Partial packet write
-    printf("Writing payload of size %d\n", packet_size) ;
-    write_payload(rembuf, packet_size) ;
+
+    m_front_write += write_packet(rembuf) ;
   }else{
     // Write another packet
-    printf("Writing payload of size %d\n", packet_size) ;
-    write_payload(m_write_buffer+m_front_write, packet_size) ;
+    m_front_write += write_packet(m_write_buffer+m_front_write) ;
   }
-  m_front_write += packet_size ;
-  // Send the packet
-  m_pGPIO->output(m_ce, IHardwareGPIO::high) ;
-  nano_sleep(0,10000) ; // 10 micro seconds
-  m_pGPIO->output(m_ce, IHardwareGPIO::low) ;
    
   pthread_mutex_unlock(&m_rwlock) ;
 

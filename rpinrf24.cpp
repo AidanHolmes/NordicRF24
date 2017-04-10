@@ -19,6 +19,7 @@
 #include <sys/stat.h>
 #include <fcntl.h>
 #include <string.h>
+#include "radioutil.h"
 
 #ifndef _BV
 #define _BV(x) 1 << x
@@ -293,6 +294,17 @@ bool NordicRF24::set_spi(IHardwareSPI *pSPI)
   return m_pSPI != NULL ;
 }
 
+uint8_t NordicRF24::write_packet(uint8_t *packet)
+{
+  uint8_t packet_size = get_transmit_width() ;
+  if (!packet) return packet_size ;
+  if (!write_payload(packet, packet_size)) return 0 ;
+  if (!m_pGPIO->output(m_ce, IHardwareGPIO::high)) return 0 ;
+  nano_sleep(0,10000) ; // 10 micro seconds
+  if (!m_pGPIO->output(m_ce, IHardwareGPIO::low)) return 0 ;
+  return packet_size ;
+}
+
 uint8_t NordicRF24::get_rx_data_size(uint8_t pipe)
 {
   uint8_t width = 0;
@@ -345,11 +357,6 @@ bool NordicRF24::write_payload(uint8_t *buffer, uint8_t len)
   if (!m_pSPI->read(m_rxbuf, len+1)) return false ;
   convert_status(*m_rxbuf) ;
   return true ;  
-}
-
-bool NordicRF24::send(uint8_t *buffer, uint8_t len)
-{
-  return false;
 }
 
 bool NordicRF24::read_register(uint8_t addr, uint8_t *val, uint8_t len)

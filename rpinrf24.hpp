@@ -45,9 +45,13 @@ public:
 
   void auto_update(bool update){m_auto_update = update;}
 
+  // Set the GPIO interface. GPIO will be configured
   bool set_gpio(IHardwareGPIO *pGPIO, uint8_t ce, uint8_t irq) ;
 
-  bool send(uint8_t *buffer, uint8_t len);
+  // Writes a packet of data. packet must match the tx packet size!
+  // Returns 0 if data cannot be written otherwise the packet length
+  // is returned.
+  uint8_t write_packet(uint8_t *packet);
   
   // Reading data functions
   uint8_t get_rx_data_size(uint8_t pipe) ;
