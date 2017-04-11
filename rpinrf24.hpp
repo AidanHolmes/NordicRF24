@@ -50,12 +50,17 @@ public:
 
   // Writes a packet of data. packet must match the tx packet size!
   // Returns 0 if data cannot be written otherwise the packet length
-  // is returned.
+  // is returned. Triggers CE to send data
   uint8_t write_packet(uint8_t *packet);
   
   // Reading data functions
+  
+  // Reads static or dynamic payload sizes depending on
+  // mode configured
   uint8_t get_rx_data_size(uint8_t pipe) ;
+  // Reads the payload data from FIFO
   bool read_payload(uint8_t *buffer, uint8_t len) ;
+  // Writes data to FIFO queues on device
   bool write_payload(uint8_t *buffer, uint8_t len) ;
   
   // Configuration settings

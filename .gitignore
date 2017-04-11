@@ -3,6 +3,7 @@ out
 rf24recv
 rf24send
 rf24cmd
+rf24ping
 
 # Compiled Object files
 *.slo

@@ -17,6 +17,7 @@
 
 #include "rpinrf24.hpp"
 #include <pthread.h>
+#include <time.h>
 
 class PingRF24 : public NordicRF24{
 public:
@@ -29,11 +30,11 @@ public:
   bool initialise(uint8_t channel) ;
   
   // receiver
-  bool listen() ;
+  bool listen(uint8_t *address) ;
 
   // sender
   // ping the address, count number of times
-  bool ping(uint8_t *address, uint16_t count);
+  uint16_t ping(uint8_t *address, uint16_t count);
 
   void print_summary() ;
 
@@ -47,6 +48,7 @@ protected:
   uint16_t m_remaining ;
   uint32_t m_max_ping ; // ms
   uint32_t m_min_ping ; // ms
+  clock_t m_tick ;
 
 private:
   pthread_mutex_t m_rwlock ;  
