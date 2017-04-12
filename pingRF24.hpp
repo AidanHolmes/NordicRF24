@@ -31,6 +31,7 @@ public:
   
   // receiver
   bool listen(uint8_t *address) ;
+  bool stop_listening() ;
 
   // sender
   // ping the address, count number of times
@@ -46,8 +47,9 @@ protected:
   uint16_t m_failed ;
   uint16_t m_succeeded ;
   uint16_t m_remaining ;
-  uint32_t m_max_ping ; // ms
-  uint32_t m_min_ping ; // ms
+  uint32_t m_max_ping ; // clock ticks
+  uint32_t m_min_ping ; // clock ticks
+  uint32_t m_avg_ping ; // clock ticks
   clock_t m_tick ;
 
 private:

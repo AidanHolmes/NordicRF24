@@ -14,6 +14,7 @@ PingRF24::PingRF24()
   m_succeeded = 0;
   m_max_ping = 0;
   m_min_ping = 0;
+  m_avg_ping = 0;
   m_remaining = 0 ;
   m_tick = 0 ;
   
@@ -47,10 +48,17 @@ bool PingRF24::max_retry_interrupt()
   m_failed++ ;
   clock_t tick = clock() ;
   clock_t time_elapsed = tick - m_tick ;
-  std::cout << "Ping timedout " << (time_elapsed / (CLOCKS_PER_SEC/1000)) << " ms\n" ;
+  std::cout << "Ping timedout " << (time_elapsed / (CLOCKS_PER_SEC/1000)) << " ms (" << "remaining " << m_remaining << ")\n";
 
   m_tick = 0 ;
   flushtx() ; // Clear failed data in TX buffer
+
+  if (m_remaining > 0){
+    m_remaining-- ;
+    m_tick = clock() ;
+    // Pulse CE and send new packet
+    if (!write_packet((uint8_t*)&m_tick)) return 0 ;
+  }
 
   pthread_mutex_unlock(&m_rwlock) ;
   
@@ -65,10 +73,17 @@ bool PingRF24::data_sent_interrupt()
   m_succeeded++ ;
   clock_t tick = clock() ;
 
-  clock_t time_elapsed = tick - m_tick ;
-  std::cout << "ACK received in " << (time_elapsed / (CLOCKS_PER_SEC/1000)) << " ms\n" ;
+  uint32_t clock_ticks = tick - m_tick ;
+  if (clock_ticks > m_max_ping) m_max_ping = clock_ticks ;
+  if (m_min_ping == 0 || clock_ticks < m_min_ping) m_min_ping = clock_ticks ;
+  if (m_avg_ping == 0) m_avg_ping = clock_ticks ;
+  else m_avg_ping = (m_avg_ping + clock_ticks) / 2 ;
+  
+  float time_elapsed = (float)(tick - m_tick) / (float)(CLOCKS_PER_SEC / 1000) ;
+  std::cout << "ACK received in " << time_elapsed << " ms (" << "remaining " << m_remaining << ")\n";
 
-  if (--m_remaining){
+  if (m_remaining > 0){
+    m_remaining-- ;
     m_tick = clock() ;
     // Pulse CE and send new packet
     if (!write_packet((uint8_t*)&m_tick)) return 0 ;
@@ -89,7 +104,7 @@ bool PingRF24::initialise(uint8_t channel)
   // Enable all interrupts
   set_use_interrupt_data_ready(true);
   set_use_interrupt_data_sent(true);
-  set_use_interrupt_data_retry(true);
+  set_use_interrupt_max_retry(true);
 
   // 16bit CRC enabled
   crc_enabled(true) ;
@@ -122,7 +137,8 @@ bool PingRF24::initialise(uint8_t channel)
 
 bool PingRF24::listen(uint8_t *address)
 {
-  if (!set_rx_address(1, address, ADDR_WIDTH)) return false ;
+  uint8_t addr_width = ADDR_WIDTH ;
+  if (!set_rx_address(1, address, &addr_width)) return false ;
 
   receiver(true) ;
   power_up(true) ;
@@ -141,9 +157,11 @@ bool PingRF24::stop_listening()
 
 uint16_t PingRF24::ping(uint8_t *address, uint16_t count)
 {
-  if (!set_tx_address(address, ADDR_WIDTH)) return false ;
-  if (!set_rx_address(0, address, ADDR_WIDTH)) return false ;
-  
+  uint8_t rx_addr_width = ADDR_WIDTH ;
+  uint8_t tx_addr_width = ADDR_WIDTH ;
+
+  // Check if a ping is running. Return remaining number of
+  // pings if running.
   pthread_mutex_lock(&m_rwlock) ;
   if (m_remaining > 0){
     pthread_mutex_unlock(&m_rwlock) ;
@@ -151,15 +169,22 @@ uint16_t PingRF24::ping(uint8_t *address, uint16_t count)
   }
   pthread_mutex_unlock(&m_rwlock) ;
 
+  if (!address) return 0 ;
+  
+  // Set addresses for new ping
+  if (!set_tx_address(address, &tx_addr_width)) return 0 ;
+  if (!set_rx_address(0, address, &rx_addr_width)) return 0 ;
+
   m_failed = 0;
   m_succeeded = 0;
   m_max_ping = 0;
   m_min_ping = 0;
+  m_avg_ping = 0 ;
   m_remaining = count ;
 
   if (count == 0) return 0; // nothing to do
 
-  if (!pi.output(m_ce, IHardwareGPIO::low)) return false ;
+  if (!m_pGPIO->output(m_ce, IHardwareGPIO::low)) return 0 ;
   receiver(false) ;
   power_up(true) ;
 
@@ -173,12 +198,15 @@ uint16_t PingRF24::ping(uint8_t *address, uint16_t count)
 
 void PingRF24::print_summary()
 {
-  std::cout << "Packets failed: " << m_failed << ", succeeded: " << m_succeeded << ", max ping: " << m_max_ping << ", min ping: " << m_min_ping << std::endl ;  
+  std::cout << "Packets failed: " << m_failed << ", succeeded: " << m_succeeded << ", max ping: " << (float)m_max_ping/1000.0 << ", min ping: " << (float)m_min_ping/1000.0 << std::endl ;
+  std::cout << "Average ping: " << (float)m_avg_ping/1000.0 << std::endl;
+  uint32_t throughput = (CLOCKS_PER_SEC / m_avg_ping) * 32 ;
+  std::cout << "Estimated throughput " << throughput << " bytes per sec\n" ;
 }
 
 int main(int argc, char *argv[])
 {
-  const char usage[] = "Usage: %s -c ce -i irq [-r] [-p]\n" ;
+  const char usage[] = "Usage: %s -c ce -i irq [-l] [-p]\n" ;
   int opt = 0 ;
   int irq = 0, ce = 0, ping = 0, listen = 0;
   
@@ -238,7 +266,8 @@ int main(int argc, char *argv[])
       sleep(1000) ; // ZZZZzz
     }
   }else if (ping){
-    while (radio.ping(tx_address,10)){ // non-blocking ping
+    radio.ping(tx_address,10) ;
+    while (radio.ping(NULL,0)){ // non-blocking ping
       sleep(1) ; // poll for completed ping
     }
     radio.print_summary() ;
