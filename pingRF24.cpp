@@ -76,8 +76,7 @@ bool PingRF24::data_sent_interrupt()
   uint32_t clock_ticks = tick - m_tick ;
   if (clock_ticks > m_max_ping) m_max_ping = clock_ticks ;
   if (m_min_ping == 0 || clock_ticks < m_min_ping) m_min_ping = clock_ticks ;
-  if (m_avg_ping == 0) m_avg_ping = clock_ticks ;
-  else m_avg_ping = (m_avg_ping + clock_ticks) / 2 ;
+  m_avg_ping += clock_ticks ;
   
   float time_elapsed = (float)(tick - m_tick) / (float)(CLOCKS_PER_SEC / 1000) ;
   std::cout << "ACK received in " << time_elapsed << " ms (" << "remaining " << m_remaining << ")\n";
@@ -198,10 +197,13 @@ uint16_t PingRF24::ping(uint8_t *address, uint16_t count)
 
 void PingRF24::print_summary()
 {
+  uint32_t avg_ping = 0 ;
+  avg_ping = m_avg_ping / m_succeeded ;
+  
   std::cout << "Packets failed: " << m_failed << ", succeeded: " << m_succeeded << ", max ping: " << (float)m_max_ping/1000.0 << ", min ping: " << (float)m_min_ping/1000.0 << std::endl ;
-  std::cout << "Average ping: " << (float)m_avg_ping/1000.0 << std::endl;
-  uint32_t throughput = (CLOCKS_PER_SEC / m_avg_ping) * 32 ;
-  std::cout << "Estimated throughput " << throughput << " bytes per sec\n" ;
+  std::cout << "Average ping: " << (float)avg_ping/1000.0 << std::endl;
+  uint32_t throughput = (CLOCKS_PER_SEC * 32) / avg_ping ;
+  std::cout << "Estimated throughput " << throughput/1024 << " kbytes per sec\n" ;
 }
 
 int main(int argc, char *argv[])

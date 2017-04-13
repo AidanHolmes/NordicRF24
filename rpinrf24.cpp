@@ -81,21 +81,30 @@ void NordicRF24::interrupt()
 	   );
     */
     if ((*i)->has_received_data()){
-      ret =(*i)->data_received_interrupt();
-    }else if((*i)->has_data_sent()){
-      ret = (*i)->data_sent_interrupt();
-    }else if ((*i)->is_at_max_retry_limit()){
-      ret = (*i)->max_retry_interrupt() ;
-    }else{
-      //fprintf(stdout, "Other IRQ interrupt\n") ;
+      if ((*i)->data_received_interrupt()) ret = true ;
     }
+    
+    if((*i)->has_data_sent()){
+      if ((*i)->data_sent_interrupt()) ret = true ;
+    }
+    
+    if ((*i)->is_at_max_retry_limit()){
+      if ((*i)->max_retry_interrupt()) ret = true ;
+    }
+
+    /*
+    if (!(*i)->has_received_data() &&
+	!(*i)->has_data_sent() &&
+	!(*i)->is_at_max_retry_limit()){
+      fprintf(stdout, "Other IRQ interrupt\n") ;
+    }
+    */
     if (ret){
       // this return can be used to limit the work done
       // and attempting to call to other instances.
       // For now this will not be used to limit and all instances will be
       // notified
       handled++ ;
-      ret = false;
     }
   }
   //fprintf(stdout, "Interrupt handled %d times\n", handled) ;
