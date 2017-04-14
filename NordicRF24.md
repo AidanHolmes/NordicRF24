@@ -71,20 +71,20 @@ Returns true if the RF24 has been powered up.
 #### is_receiver()
 Returns true if the RF24 device is running as a receiver. Returns false if the device is a transmitter.
 
-####is_2_byte_crc()
+#### is_2_byte_crc()
 Returns true if 16bit CRC is in use. Returns false if 8bit CRC is in use
 
-####set_use_interrupt_data_ready(bool set)
+#### set_use_interrupt_data_ready(bool set)
 
-####set_use_interrupt_data_sent(bool set)
+#### set_use_interrupt_data_sent(bool set)
 
-####set_use_interrupt_max_retry(bool set)
+#### set_use_interrupt_max_retry(bool set)
 
-####crc_enabled(bool set)
+#### crc_enabled(bool set)
 
-####set_2_byte_crc(bool set)
+#### set_2_byte_crc(bool set)
 
-####power_up(bool set)
+#### power_up(bool set)
 
 #### receiver(bool set)
 

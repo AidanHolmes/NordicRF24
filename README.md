@@ -22,13 +22,13 @@ The intended architecture is to use this class as a base instance, inherit any s
 ### Tools
 rf24command.c provides a simple command line tool to manage the hardware. This allows resetting and printing the state of the registers.
 Parameters:
-* -c *specify the CE pin in BCM format*
-* -i *specify the IRQ pin in BCM format*
-* -p *print the state of the RF24 hardware*
-* -r *reset the RF24 hardware and pulls CE pin low*
+* -c *(specify the CE pin in BCM format)*
+* -i *(specify the IRQ pin in BCM format)*
+* -p *(print the state of the RF24 hardware)*
+* -r *(reset the RF24 hardware and pulls CE pin low)*
 
 ### Examples
-The [BufferedRF24](BufferedRF24.md] class provides blocking and non-blocking read/write calls. This shows how the interrupt virtual calls work in an inherited class. It can be used as a library to support code in it's current state although the error handling and timing isn't optimal. 
+The [BufferedRF24](BufferedRF24.md) class provides blocking and non-blocking read/write calls. This shows how the interrupt virtual calls work in an inherited class. It can be used as a library to support code in it's current state although the error handling and timing isn't optimal. 
 
 Another example is the implementation of a simple ping class with a listener and sender in [PingRF24](PingRF24.md). This can be thought of as a class inheritance implementing a protocol on top of the link layer. Of course it's not a protocol as it will treat any garbage received as a ping message without checking content but the example can be built upon for other implementations of protocols.
 
@@ -40,11 +40,11 @@ This is a bit of a misnomer as the original shared library was for driving displ
 Perform a git clone on this repository in a sibling directory. The hardware library is statically built and linked so doesn't require a shared libarary to be installed (this may change in the future). 
 
 Wiring Pi library is required for this C++ build. For Raspian Jessie:
-'''> sudo apt-get update'''
-'''> sudo apt-get wiringpi'''
+```> sudo apt-get update```
+```> sudo apt-get wiringpi```
 
 Enable SPIDEV with raspi-config. Enter Advanced and enable SPI.
-'''> sudo raspi-config'''
+```> sudo raspi-config```
 
 ## Why do this?
 I like to get my hands dirty and understand the underlying hardware. I've done this with displays and now I'm trying with a radio device.
