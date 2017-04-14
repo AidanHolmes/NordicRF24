@@ -206,13 +206,37 @@ void PingRF24::print_summary()
   std::cout << "Estimated throughput " << throughput/1024 << " kbytes per sec\n" ;
 }
 
+#include <string.h>
+
+bool straddr_to_addr(char *str, uint8_t *rf24addr)
+{
+  int shift = 0;
+  memset(rf24addr, 0, ADDR_WIDTH) ;
+  if (strlen(str) != ADDR_WIDTH * 2) return false ;
+  uint8_t *p = rf24addr ;
+  for (int i = 0; i <= ADDR_WIDTH; i += 2){
+    if (str[i] >= '0' || str[i] <= '9'){
+      *p |= ((str[i] - '0') << shift) ;
+    }else if(str[i] >= 'A' || str[i] <= 'F'){
+      *p |= ((str[i] - 'A' + 10) << shift) ;
+    }else if(str[i] >= 'a' || str[i] <= 'f'){
+      *p |= ((str[i] - 'a' + 10) << shift) ;
+    }
+    if (shift == 1) p++ ;
+    shift = (shift == 0)?1:0 ;
+  }
+  return true ;
+}
+
 int main(int argc, char *argv[])
 {
-  const char usage[] = "Usage: %s -c ce -i irq [-l] [-p]\n" ;
+  const char usage[] = "Usage: %s -c ce -i irq [-o channel] [-a address] [-n count] [-l] [-p]\n" ;
   int opt = 0 ;
-  int irq = 0, ce = 0, ping = 0, listen = 0;
-  
-  while ((opt = getopt(argc, argv, "i:c:pl")) != -1) {
+  int irq = 0, ce = 0, ping = 0, listen = 0, channel = 0, count = 10;
+  uint8_t rf24address[ADDR_WIDTH] ;
+  bool addr_set = false ;
+
+  while ((opt = getopt(argc, argv, "i:c:o:a:n:pl")) != -1) {
     switch (opt) {
     case 'l': // listen
       listen = 1;
@@ -226,6 +250,16 @@ int main(int argc, char *argv[])
     case 'c': // CE pin
       ce = atoi(optarg) ;
       break ;
+    case 'o': // channel
+      channel = atoi(optarg) ;
+      break;
+    case 'a': // address
+      if (!straddr_to_addr(optarg, rf24address)) return EXIT_FAILURE ;
+      addr_set = true;
+      break;
+    case 'n': // pings
+      count = atoi(optarg) ;
+      break ;
     default: // ? opt
       fprintf(stderr, usage, argv[0]);
       exit(EXIT_FAILURE);
@@ -238,8 +272,8 @@ int main(int argc, char *argv[])
   }
 
   PingRF24 radio ;
-  wPi pi ;
-  spiHw spi ;
+  wPi pi ; // WiringPi
+  spiHw spi ; // SPIDEV interface
 
   if (!spi.spiopen(0,0)){ // init SPI
     fprintf(stderr, "Cannot Open SPI\n") ;
@@ -257,18 +291,24 @@ int main(int argc, char *argv[])
   radio.set_spi(&spi) ;
   radio.auto_update(true);
 
-  radio.initialise(0x60) ;
+  if (!radio.initialise(channel)){
+    fprintf(stderr, "Cannot initialise using channel %d\n", channel) ;
+    return EXIT_FAILURE;
+  }
 
-  uint8_t rx_address[5] = {0xC2,0xC2,0xC2,0xC2,0xC2} ;
-  uint8_t tx_address[5] = {0xE7,0xE7,0xE7,0xE7,0xE7} ;
+  // default addresses
+  uint8_t rx_address[ADDR_WIDTH] = {0xC2,0xC2,0xC2,0xC2,0xC2} ;
+  uint8_t tx_address[ADDR_WIDTH] = {0xE7,0xE7,0xE7,0xE7,0xE7} ;
   
   if (listen){
-    if (!radio.listen(rx_address)) return EXIT_FAILURE ;
+    if (!addr_set) memcpy(rf24address, rx_address, ADDR_WIDTH) ;
+    if (!radio.listen(rf24address)) return EXIT_FAILURE ;
     for ( ; ; ){
       sleep(1000) ; // ZZZZzz
     }
   }else if (ping){
-    radio.ping(tx_address,10) ;
+    if (!addr_set) memcpy(rf24address, tx_address, ADDR_WIDTH) ;
+    radio.ping(rf24address,count) ;
     while (radio.ping(NULL,0)){ // non-blocking ping
       sleep(1) ; // poll for completed ping
     }

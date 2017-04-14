@@ -843,6 +843,7 @@ int8_t NordicRF24::get_retry_count()
 
 bool NordicRF24::set_channel(uint8_t channel)
 {
+  if (channel > 125) return false ;
   uint8_t reg = channel & ~0x80 ; // Clear top bit if set
   return write_register(REG_RF_CH, &reg, 1) ;
 }

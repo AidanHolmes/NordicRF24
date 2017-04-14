@@ -1,0 +1,1 @@
+# PingRF24 class
