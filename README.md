@@ -40,11 +40,17 @@ This is a bit of a misnomer as the original shared library was for driving displ
 Perform a git clone on this repository in a sibling directory. The hardware library is statically built and linked so doesn't require a shared libarary to be installed (this may change in the future). 
 
 Wiring Pi library is required for this C++ build. For Raspian Jessie:
-```> sudo apt-get update```
-```> sudo apt-get wiringpi```
+```
+> sudo apt-get update
+```
+```
+> sudo apt-get wiringpi
+```
 
 Enable SPIDEV with raspi-config. Enter Advanced and enable SPI.
-```> sudo raspi-config```
+```
+> sudo raspi-config
+```
 
 ## Why do this?
 I like to get my hands dirty and understand the underlying hardware. I've done this with displays and now I'm trying with a radio device.
