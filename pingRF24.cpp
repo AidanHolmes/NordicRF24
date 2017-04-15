@@ -109,7 +109,7 @@ bool PingRF24::initialise(uint8_t channel)
   crc_enabled(true) ;
   set_2_byte_crc(true);
 
-  // Configure pipe 1 as receiver
+  // Configure pipe 0 as transmit ACK buffer
   set_pipe_ack(0, true);
   if (!set_payload_width(0,32)) return false ; // 32 byte pings
 
@@ -179,7 +179,7 @@ uint16_t PingRF24::ping(uint8_t *address, uint16_t count)
   m_max_ping = 0;
   m_min_ping = 0;
   m_avg_ping = 0 ;
-  m_remaining = count ;
+  m_remaining = count-1 ;
 
   if (count == 0) return 0; // nothing to do
 
@@ -210,33 +210,36 @@ void PingRF24::print_summary()
 
 bool straddr_to_addr(char *str, uint8_t *rf24addr)
 {
-  int shift = 0;
+  int shift = 4;
   memset(rf24addr, 0, ADDR_WIDTH) ;
   if (strlen(str) != ADDR_WIDTH * 2) return false ;
   uint8_t *p = rf24addr ;
-  for (int i = 0; i <= ADDR_WIDTH; i += 2){
-    if (str[i] >= '0' || str[i] <= '9'){
+  for (int i = 0; i <= ADDR_WIDTH * 2; i++){
+    if (str[i] >= '0' && str[i] <= '9'){
       *p |= ((str[i] - '0') << shift) ;
-    }else if(str[i] >= 'A' || str[i] <= 'F'){
+    }else if(str[i] >= 'A' && str[i] <= 'F'){
       *p |= ((str[i] - 'A' + 10) << shift) ;
-    }else if(str[i] >= 'a' || str[i] <= 'f'){
+    }else if(str[i] >= 'a' && str[i] <= 'f'){
       *p |= ((str[i] - 'a' + 10) << shift) ;
     }
-    if (shift == 1) p++ ;
-    shift = (shift == 0)?1:0 ;
+    
+    if (shift == 0){
+      p++ ;
+    }
+    shift = (shift == 0)?4:0 ;
   }
   return true ;
 }
 
 int main(int argc, char *argv[])
 {
-  const char usage[] = "Usage: %s -c ce -i irq [-o channel] [-a address] [-n count] [-l] [-p]\n" ;
+  const char usage[] = "Usage: %s -c ce -i irq [-o channel] [-a address] [-s 250|1|2] [-n count] [-l] [-p]\n" ;
   int opt = 0 ;
-  int irq = 0, ce = 0, ping = 0, listen = 0, channel = 0, count = 10;
+  int irq = 0, ce = 0, ping = 0, listen = 0, channel = 0, count = 10, speed = 1;
   uint8_t rf24address[ADDR_WIDTH] ;
   bool addr_set = false ;
 
-  while ((opt = getopt(argc, argv, "i:c:o:a:n:pl")) != -1) {
+  while ((opt = getopt(argc, argv, "s:i:c:o:a:n:pl")) != -1) {
     switch (opt) {
     case 'l': // listen
       listen = 1;
@@ -253,6 +256,9 @@ int main(int argc, char *argv[])
     case 'o': // channel
       channel = atoi(optarg) ;
       break;
+    case 's': // speed
+      speed = atoi(optarg) ;
+      break ;
     case 'a': // address
       if (!straddr_to_addr(optarg, rf24address)) return EXIT_FAILURE ;
       addr_set = true;
@@ -269,6 +275,21 @@ int main(int argc, char *argv[])
   if (!ce || !irq){
     fprintf(stderr, usage, argv[0]);
     exit(EXIT_FAILURE);
+  }
+
+  switch (speed){
+  case 1:
+    speed = RF24_1MBPS ;
+    break ;
+  case 2:
+    speed = RF24_2MBPS ;
+    break ;
+  case 250:
+    speed = RF24_250KBPS ;
+    break ;
+  default:
+    fprintf(stderr, "Invalid speed option. Use 250, 1 or 2\n") ;
+    return EXIT_FAILURE ;
   }
 
   PingRF24 radio ;
@@ -295,6 +316,8 @@ int main(int argc, char *argv[])
     fprintf(stderr, "Cannot initialise using channel %d\n", channel) ;
     return EXIT_FAILURE;
   }
+
+  radio.set_data_rate(speed) ;
 
   // default addresses
   uint8_t rx_address[ADDR_WIDTH] = {0xC2,0xC2,0xC2,0xC2,0xC2} ;
