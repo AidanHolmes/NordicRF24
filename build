@@ -1,9 +1,0 @@
-#!/bin/sh
-
-g++ -g -c rpinrf24.cpp -I../hardware -L../hardware
-g++ -g -c bufferedrf24.cpp -I../hardware -L../hardware
-g++ -g -c radioutil.c -I../hardware -L../hardware
-g++ -g rf24command.cpp rpinrf24.o radioutil.o -I../hardware -L../hardware -lpihw -lwiringPi -o rf24cmd
-g++ -g receiver.cpp bufferedrf24.o rpinrf24.o radioutil.o -I../hardware -L../hardware -lpihw -lwiringPi -o rf24recv
-g++ -g sender.cpp bufferedrf24.o rpinrf24.o radioutil.o -I../hardware -L../hardware -lpihw -lwiringPi -o rf24send
-g++ -g pingRF24.cpp rpinrf24.o radioutil.o -I../hardware -L../hardware -lpihw -lwiringPi -o rf24ping

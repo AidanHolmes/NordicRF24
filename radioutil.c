@@ -41,7 +41,7 @@ void print_state(NordicRF24 *pRadio)
   }
 
   pRadio->get_tx_address(address,&addr_width) ;
-  printf("Transmit Address: [", i) ;
+  printf("Transmit Address: [") ;
   for(int j=0; j < addr_width; j++){
     printf(" %X ",address[j]) ;
   }
