@@ -75,18 +75,27 @@ Returns true if the RF24 device is running as a receiver. Returns false if the d
 Returns true if 16bit CRC is in use. Returns false if 8bit CRC is in use
 
 #### set_use_interrupt_data_ready(bool set)
+Specify if the interrupt should be set if data is ready.
+Set to true to activate the interrupt, false to deactivate
 
 #### set_use_interrupt_data_sent(bool set)
+Specify if the interrupt should be set if data has been sent
+Set to true to activate the interrupt, false to deactivate
 
 #### set_use_interrupt_max_retry(bool set)
+Specify if the interrupt should be set if the max retries has been exceeded
+Set to true to activate the interrupt, false to deactivate
 
 #### crc_enabled(bool set)
+Enable or disable CRC
 
 #### set_2_byte_crc(bool set)
+Set CRC to 8 or 16 bit. If set is true then it will use 16 bit CRC
 
 #### power_up(bool set)
+If set is true then then it will be powered up. If false then the RF24 hardware will be set to powered down state
 
 #### receiver(bool set)
-
+Set to true to act as a receiver. Use false to act as a transmitter.
 
 

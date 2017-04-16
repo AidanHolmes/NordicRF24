@@ -48,7 +48,7 @@ bool PingRF24::max_retry_interrupt()
   m_failed++ ;
   clock_t tick = clock() ;
   clock_t time_elapsed = tick - m_tick ;
-  std::cout << "Ping timedout " << (time_elapsed / (CLOCKS_PER_SEC/1000)) << " ms (" << "remaining " << m_remaining << ")\n";
+  std::cout << "Ping timed out " << (time_elapsed / (CLOCKS_PER_SEC/1000)) << " ms (" << "remaining " << m_remaining << ")\n";
 
   m_tick = 0 ;
   flushtx() ; // Clear failed data in TX buffer
@@ -168,11 +168,11 @@ uint16_t PingRF24::ping(uint8_t *address, uint16_t count)
   }
   pthread_mutex_unlock(&m_rwlock) ;
 
-  if (!address) return 0 ;
+  if (!address){ return 0 ;}
   
   // Set addresses for new ping
-  if (!set_tx_address(address, &tx_addr_width)) return 0 ;
-  if (!set_rx_address(0, address, &rx_addr_width)) return 0 ;
+  if (!set_tx_address(address, &tx_addr_width)){printf("failed to set tx address\n"); return 0 ;}
+  if (!set_rx_address(0, address, &rx_addr_width)){printf("failed to set tx address\n"); return 0 ;}
 
   m_failed = 0;
   m_succeeded = 0;
@@ -181,16 +181,16 @@ uint16_t PingRF24::ping(uint8_t *address, uint16_t count)
   m_avg_ping = 0 ;
   m_remaining = count-1 ;
 
-  if (count == 0) return 0; // nothing to do
+  if (count == 0){printf("Count is zero\n") ; return 0;} // nothing to do
 
-  if (!m_pGPIO->output(m_ce, IHardwareGPIO::low)) return 0 ;
+  if (!m_pGPIO->output(m_ce, IHardwareGPIO::low)){fprintf(stderr, "Cannot reset GPIO CE pin\n") ; return 0 ;}
   receiver(false) ;
   power_up(true) ;
 
   clock_t tick = clock() ;
   m_tick = tick ;
   // Pulse CE and send packet
-  if (!write_packet((uint8_t*)&tick)) return 0 ;
+  if (!write_packet((uint8_t*)&tick)){fprintf(stderr, "Write packet failed\n"); return 0 ;}
   
   return m_remaining ;
 }
@@ -199,7 +199,8 @@ void PingRF24::print_summary()
 {
   uint32_t avg_ping = 0 ;
   avg_ping = m_avg_ping / m_succeeded ;
-  
+
+  printf("here as well\n") ;
   std::cout << "Packets failed: " << m_failed << ", succeeded: " << m_succeeded << ", max ping: " << (float)m_max_ping/1000.0 << ", min ping: " << (float)m_min_ping/1000.0 << std::endl ;
   std::cout << "Average ping: " << (float)avg_ping/1000.0 << std::endl;
   uint32_t throughput = (CLOCKS_PER_SEC * 32) / avg_ping ;
@@ -207,6 +208,8 @@ void PingRF24::print_summary()
 }
 
 #include <string.h>
+#include <time.h>
+#include <signal.h>
 
 bool straddr_to_addr(char *str, uint8_t *rf24addr)
 {
@@ -231,6 +234,15 @@ bool straddr_to_addr(char *str, uint8_t *rf24addr)
   return true ;
 }
 
+PingRF24 *pradio =NULL ;
+
+void siginterrupt(int sig)
+{
+  printf("Exiting and resetting radio\n") ;
+  if (pradio) pradio->reset_rf24() ;
+  exit(EXIT_SUCCESS) ;
+}
+
 int main(int argc, char *argv[])
 {
   const char usage[] = "Usage: %s -c ce -i irq [-o channel] [-a address] [-s 250|1|2] [-n count] [-l] [-p]\n" ;
@@ -238,7 +250,17 @@ int main(int argc, char *argv[])
   int irq = 0, ce = 0, ping = 0, listen = 0, channel = 0, count = 10, speed = 1;
   uint8_t rf24address[ADDR_WIDTH] ;
   bool addr_set = false ;
+  struct sigaction siginthandle ;
 
+  siginthandle.sa_handler = siginterrupt ;
+  sigemptyset(&siginthandle.sa_mask) ;
+  siginthandle.sa_flags = 0 ;
+
+  if (sigaction(SIGINT, &siginthandle, NULL) < 0){
+    fprintf(stderr,"Failed to set signal handler\n") ;
+    return EXIT_FAILURE ;
+  }
+  
   while ((opt = getopt(argc, argv, "s:i:c:o:a:n:pl")) != -1) {
     switch (opt) {
     case 'l': // listen
@@ -296,6 +318,8 @@ int main(int argc, char *argv[])
   wPi pi ; // WiringPi
   spiHw spi ; // SPIDEV interface
 
+  pradio = &radio ;
+  
   if (!spi.spiopen(0,0)){ // init SPI
     fprintf(stderr, "Cannot Open SPI\n") ;
     return EXIT_FAILURE;

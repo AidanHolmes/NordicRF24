@@ -18,11 +18,11 @@ void set_channel(NordicRF24 *r, int channel)
 
 int main(int argc, char *argv[])
 {
-  const char usage[] = "Usage: %s -c ce -i irq [-r] [-o channel] [-p]\n" ;
+  const char usage[] = "Usage: %s -c ce [-r] [-o channel] [-p]\n" ;
   int opt = 0, reset = 0, print = 0;
-  int irq = 0, ce = 0, chan = -1 ;
+  int ce = 0, chan = -1 ;
   
-  while ((opt = getopt(argc, argv, "i:o:prc:")) != -1) {
+  while ((opt = getopt(argc, argv, "o:prc:")) != -1) {
     switch (opt) {
     case 'r': // reset
       reset = 1;
@@ -32,9 +32,6 @@ int main(int argc, char *argv[])
       break;
     case 'p': // print state
       print = 1 ;
-      break ;
-    case 'i': // IRQ pin
-      irq = atoi(optarg) ;
       break ;
     case 'c': // CE pin
       ce = atoi(optarg) ;
@@ -47,12 +44,12 @@ int main(int argc, char *argv[])
   
   //printf("Argument = %s\n", argv[optind]);
 
-  if (!ce || !irq){
+  if (!ce){
     fprintf(stderr, usage, argv[0]);
     exit(EXIT_FAILURE);
   }
 
-  printf("Using pins CE %d and IRQ %d\n", ce, irq) ;
+  printf("Using pins CE %d\n", ce) ;
 
   NordicRF24 radio ;
   wPi pi ;
@@ -66,7 +63,7 @@ int main(int argc, char *argv[])
   spi.setMode(0) ;
   spi.setSpeed(6000000) ;
 
-  if (!radio.set_gpio(&pi, ce, irq)){
+  if (!radio.set_gpio(&pi, ce, 0)){
     fprintf(stderr, "Failed to initialise GPIO\n") ;
     return EXIT_FAILURE ;
   }
@@ -87,7 +84,6 @@ int main(int argc, char *argv[])
     set_channel(&radio, chan);
   }
   if (print){
-    printf("IRQ is set to %s\n",(pi.input(irq)==IHardwareGPIO::low)?"LOW":"HIGH");
     print_state(&radio) ;
   }
   

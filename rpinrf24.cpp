@@ -284,14 +284,16 @@ bool NordicRF24::set_gpio(IHardwareGPIO *pGPIO, uint8_t ce, uint8_t irq)
   }
   pGPIO->output(m_ce, IHardwareGPIO::low) ;
 
-  if (!pGPIO->setup(m_irq, IHardwareGPIO::gpio_input)){
-    fprintf(stderr, "Cannot set GPIO input pin for IRQ\n") ;
-    return false ;
-  }
-
-  if (!pGPIO->register_interrupt(m_irq, IHardwareGPIO::falling, interrupt)){
-    fprintf(stderr, "Cannot set GPIO interrupt pin for IRQ\n") ;
-    return false ;
+  if (m_irq > 0){
+    if (!pGPIO->setup(m_irq, IHardwareGPIO::gpio_input)){
+      fprintf(stderr, "Cannot set GPIO input pin for IRQ\n") ;
+      return false ;
+    }
+    
+    if (!pGPIO->register_interrupt(m_irq, IHardwareGPIO::falling, interrupt)){
+      fprintf(stderr, "Cannot set GPIO interrupt pin for IRQ\n") ;
+      return false ;
+    }
   }
   
   return true ;

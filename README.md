@@ -23,7 +23,6 @@ The intended architecture is to use this class as a base instance, inherit any s
 rf24command.c provides a simple command line tool to manage the hardware. This allows resetting and printing the state of the registers.
 Parameters:
 * -c *(specify the CE pin in BCM format)*
-* -i *(specify the IRQ pin in BCM format)*
 * -p *(print the state of the RF24 hardware)*
 * -r *(reset the RF24 hardware and pulls CE pin low)*
 
