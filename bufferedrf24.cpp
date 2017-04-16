@@ -62,7 +62,7 @@ uint16_t BufferedRF24::write(uint8_t *buffer, uint16_t length, bool blocking)
 
 bool BufferedRF24::max_retry_interrupt()
 {
-  uint16_t size = 0;
+  //uint16_t size = 0;
 
   printf ("Received max try interrupt. Cancel transmission\n") ;
   pthread_mutex_lock(&m_rwlock) ;
