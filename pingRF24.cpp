@@ -216,8 +216,10 @@ bool straddr_to_addr(char *str, uint8_t *rf24addr)
   int shift = 4;
   memset(rf24addr, 0, ADDR_WIDTH) ;
   if (strlen(str) != ADDR_WIDTH * 2) return false ;
-  uint8_t *p = rf24addr ;
-  for (int i = 0; i <= ADDR_WIDTH * 2; i++){
+  // Write backwards so MSB is at the end of the buffer
+  // and LSB is written first
+  uint8_t *p = rf24addr+ADDR_WIDTH-1 ; 
+  for (int i = 0; i < ADDR_WIDTH * 2; i++){
     if (str[i] >= '0' && str[i] <= '9'){
       *p |= ((str[i] - '0') << shift) ;
     }else if(str[i] >= 'A' && str[i] <= 'F'){
@@ -227,7 +229,7 @@ bool straddr_to_addr(char *str, uint8_t *rf24addr)
     }
     
     if (shift == 0){
-      p++ ;
+      p-- ;
     }
     shift = (shift == 0)?4:0 ;
   }

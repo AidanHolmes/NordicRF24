@@ -31,7 +31,8 @@ void print_state(NordicRF24 *pRadio)
     printf("Pipe %d ACK: %s\n", i, pRadio->is_pipe_ack(i)?"true":"false") ;
     pRadio->get_rx_address(i, address, &addr_width) ;
     printf("Pipe %d Address: [", i) ;
-    for (int j=0; j < addr_width; j++){
+    // Print backwards so MSB is printed first
+    for (int j=addr_width-1; j >= 0; j--){
       printf(" %X ",address[j]) ;
     }
     printf("]\n");
@@ -42,7 +43,7 @@ void print_state(NordicRF24 *pRadio)
 
   pRadio->get_tx_address(address,&addr_width) ;
   printf("Transmit Address: [") ;
-  for(int j=0; j < addr_width; j++){
+  for (int j=addr_width-1; j >= 0; j--){
     printf(" %X ",address[j]) ;
   }
   printf("]\n");
