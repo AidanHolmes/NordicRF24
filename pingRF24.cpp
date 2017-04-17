@@ -200,7 +200,6 @@ void PingRF24::print_summary()
   uint32_t avg_ping = 0 ;
   avg_ping = m_avg_ping / m_succeeded ;
 
-  printf("here as well\n") ;
   std::cout << "Packets failed: " << m_failed << ", succeeded: " << m_succeeded << ", max ping: " << (float)m_max_ping/1000.0 << ", min ping: " << (float)m_min_ping/1000.0 << std::endl ;
   std::cout << "Average ping: " << (float)avg_ping/1000.0 << std::endl;
   uint32_t throughput = (CLOCKS_PER_SEC * 32) / avg_ping ;
