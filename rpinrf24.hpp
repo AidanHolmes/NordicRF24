@@ -248,6 +248,7 @@ protected:
 
   // Setup register
   bool m_cont_wave ;
+  bool m_pll_lock ;
   uint8_t m_data_rate ; // 4 levels
   uint8_t m_rf_pwr ; // 4 levels
 

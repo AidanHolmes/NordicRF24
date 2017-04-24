@@ -235,6 +235,7 @@ void NordicRF24::reset_class()
 
   // Setup register defaults
   m_cont_wave = false ;
+  m_pll_lock = false ;
   m_data_rate = RF24_2MBPS ;
   m_rf_pwr = RF24_0DBM ;
 
@@ -511,6 +512,7 @@ bool NordicRF24::read_setup()
   else m_data_rate = ((_BV(3) & reg) > 0)?RF24_2MBPS:RF24_1MBPS;
 
   m_cont_wave = ((_BV(7) & reg) > 0)?true:false;
+  m_pll_lock = ((_BV(4) & reg) > 0)?true:false;
   m_rf_pwr = (0x06 & reg) >> 1;
 
   return true ;
@@ -522,6 +524,7 @@ bool NordicRF24::write_setup()
   reg |= (m_cont_wave?_BV(7):0) |
     (m_data_rate == RF24_250KBPS?_BV(5):0) |
     (m_data_rate == RF24_2MBPS?_BV(3):0) |
+    (m_pll_lock?_BV(4):0) |
     (m_rf_pwr << 1);
   return write_register(REG_RF_SETUP, &reg, 1) ;
 }
@@ -543,6 +546,7 @@ void NordicRF24::set_data_rate(uint8_t datarate)
 void NordicRF24::set_continuous_carrier_transmit(bool set)
 {
   m_cont_wave = set ;
+  m_pll_lock = set ;
   if (m_auto_update) write_setup() ;
 }
 
