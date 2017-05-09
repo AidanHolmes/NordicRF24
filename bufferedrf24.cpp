@@ -9,7 +9,8 @@ BufferedRF24::BufferedRF24()
   m_write_size = 0;
   m_front_read = 0 ;
   m_front_write = 0 ;
-
+  m_failed_max_retransmit = false ;
+  
   if (pthread_mutex_init(&m_rwlock, NULL) != 0)
     fprintf(stderr, "Mutex creation failed\n") ;
   
@@ -38,6 +39,7 @@ uint16_t BufferedRF24::write(uint8_t *buffer, uint16_t length, bool blocking)
   memcpy(m_write_buffer+m_write_size, buffer, len) ;
   if (m_write_size == 0){
     // Fresh write
+    m_failed_max_retransmit = false ;
     m_front_write = write_packet(m_write_buffer) ;
     if (!m_front_write) return 0 ;
   }
@@ -60,6 +62,13 @@ uint16_t BufferedRF24::write(uint8_t *buffer, uint16_t length, bool blocking)
   return len ;
 }
 
+enStatus BufferedRF24::write_status()
+{
+  if (m_failed_max_retransmit) return max_retry_failure ;
+
+  return ok ;
+}
+
 bool BufferedRF24::max_retry_interrupt()
 {
   //uint16_t size = 0;
@@ -74,7 +83,7 @@ bool BufferedRF24::max_retry_interrupt()
   
   // Slightly awkward situation, what do I tell the
   // write call?
-  // To Do: Set error flag
+  m_failed_max_retransmit = true ;
 
   pthread_mutex_unlock(&m_rwlock) ;
   return true ;

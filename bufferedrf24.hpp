@@ -29,6 +29,8 @@ public:
   uint16_t write(uint8_t *buffer, uint16_t length, bool blocking) ;
   uint16_t read(uint8_t *buffer, uint16_t length, uint8_t pipe, bool blocking) ;
 
+  enum enStatus {ok,max_retry_failure} ;
+  
 protected:
   bool data_received_interrupt() ;
   bool max_retry_interrupt();
@@ -38,6 +40,8 @@ protected:
   uint8_t m_write_buffer[RF24_BUFFER_WRITE];
   uint16_t m_read_size, m_front_read ;
   uint16_t m_write_size, m_front_write ;
+
+  bool m_failed_max_retransmit;
   
 private:
   pthread_mutex_t m_rwlock ;  
