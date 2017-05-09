@@ -192,6 +192,7 @@ Power level can be one of 4 values:
 - RF24_NEG6DBM which is -6db power
 - RF24_NEG12DBM which is -12db power
 - RF24_NEG18DBM which is the lowest power at -18db
+
 Invalid values are ignored
 
 #### get_power_level()
@@ -200,6 +201,7 @@ Returns one of the following values
 - RF24_NEG6DBM
 - RF24_NEG12DBM
 - RF24_NEG18DBM
+
 If an error occurs then the value may be inaccurate
 
 #### set_data_rate(uint8_t datarate)
@@ -207,6 +209,7 @@ If an error occurs then the value may be inaccurate
 - RF24_250KBPS
 - RF24_1MBPS
 - RF24_2MBPS
+
 Invalid values will default the rate to 1MB per sec
 
 #### get_data_rate()
@@ -214,6 +217,7 @@ Returns the data rate set in the hardware
 - RF24_250KBPS
 - RF24_1MBPS
 - RF24_2MBPS
+
 If an error occurs then the value may be inaccurate
 
 #### set_continuous_carrier_transmit(bool set)

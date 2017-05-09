@@ -29,17 +29,21 @@ CMDEXE = rf24cmd
 .PHONY: all
 all: $(PINGEXE) $(SENDEXE) $(RECVEXE) $(CMDEXE)
 
-$(PINGEXE): $(OBJS_PING) $(OBJS_CMD)
+$(PINGEXE): $(OBJS_PING) $(OBJS_CMD) libhw
 	$(CXX) $(LDFLAGS) $(OBJS_PING) $(OBJS_CMD) $(LIBS) -o $@
 
-$(RECVEXE): $(OBJS_RECV) $(OBJS_CMD)
+$(RECVEXE): $(OBJS_RECV) $(OBJS_CMD) libhw
 	$(CXX) $(LDFLAGS) $(OBJS_RECV) $(OBJS_CMD) $(LIBS) -o $@
 
-$(SENDEXE): $(OBJS_SEND) $(OBJS_CMD)
+$(SENDEXE): $(OBJS_SEND) $(OBJS_CMD) libhw
 	$(CXX) $(LDFLAGS) $(OBJS_SEND) $(OBJS_CMD) $(LIBS) -o $@
 
-$(CMDEXE): $(OBJS_CMDUTIL) $(OBJS_CMD)
+$(CMDEXE): $(OBJS_CMDUTIL) $(OBJS_CMD) libhw
 	$(CXX) $(LDFLAGS) $(OBJS_CMDUTIL) $(OBJS_CMD) $(LIBS) -o $@
+
+.PHONY: libhw
+libhw:
+	$(MAKE) libpihw.a -C $(HWLIBS)
 
 .PHONY: clean
 clean:
