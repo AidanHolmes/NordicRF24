@@ -91,12 +91,15 @@ int main(int argc, char **argv)
   print_state(&radio) ;
 
   uint8_t send_me[] = "Hello World" ;
-  //for (;;){
-  uint16_t sent = radio.write(send_me, strlen((char*)send_me), true) ;
-  printf("Blocking write returned %d\n", sent) ;
+  try{
+    uint16_t sent = radio.write(send_me, strlen((char*)send_me), true) ;
+    printf("Blocking write returned %d\n", sent) ;
+  }catch(BuffIOErr &e){
+    fprintf(stderr, "%s\n", e.what()) ;
+  }catch(BuffMaxRetry &e){
+    fprintf(stderr, "Message failed to deliver\n") ;
+  }
   sleep(1);
-    //}
-
   radio.reset_rf24();
     
   return 0 ;

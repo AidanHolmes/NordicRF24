@@ -9,10 +9,12 @@ BufferedRF24::BufferedRF24()
   m_write_size = 0;
   m_front_read = 0 ;
   m_front_write = 0 ;
-  m_failed_max_retransmit = false ;
+  m_status = ok ;
   
-  if (pthread_mutex_init(&m_rwlock, NULL) != 0)
-    fprintf(stderr, "Mutex creation failed\n") ;
+  if (pthread_mutex_init(&m_rwlock, NULL) != 0){
+    throw BuffException("Mutex creation failed") ;
+    //fprintf(stderr, "Mutex creation failed\n") ;
+  }
   
 }
 
@@ -39,9 +41,12 @@ uint16_t BufferedRF24::write(uint8_t *buffer, uint16_t length, bool blocking)
   memcpy(m_write_buffer+m_write_size, buffer, len) ;
   if (m_write_size == 0){
     // Fresh write
-    m_failed_max_retransmit = false ;
+    m_status = ok ;
     m_front_write = write_packet(m_write_buffer) ;
-    if (!m_front_write) return 0 ;
+    if (!m_front_write){
+      pthread_mutex_unlock(&m_rwlock) ;
+      throw BuffIOErr("write_packet failed") ;
+    }
   }
 
   m_write_size += len ;
@@ -52,6 +57,8 @@ uint16_t BufferedRF24::write(uint8_t *buffer, uint16_t length, bool blocking)
     // release thread locks
     pthread_mutex_unlock(&m_rwlock) ;
     while(m_write_size > 0){
+      if (m_status == max_retry_failure) throw BuffMaxRetry() ;
+      else if(m_status == io_err) throw BuffIOErr("error blocking write") ;
       nano_sleep(0,100000) ; // 1 ms
     }
     return written ;
@@ -62,11 +69,9 @@ uint16_t BufferedRF24::write(uint8_t *buffer, uint16_t length, bool blocking)
   return len ;
 }
 
-enStatus BufferedRF24::write_status()
+BufferedRF24::enStatus BufferedRF24::get_status()
 {
-  if (m_failed_max_retransmit) return max_retry_failure ;
-
-  return ok ;
+  return m_status ;
 }
 
 bool BufferedRF24::max_retry_interrupt()
@@ -83,7 +88,7 @@ bool BufferedRF24::max_retry_interrupt()
   
   // Slightly awkward situation, what do I tell the
   // write call?
-  m_failed_max_retransmit = true ;
+  m_status = max_retry_failure ;
 
   pthread_mutex_unlock(&m_rwlock) ;
   return true ;
@@ -92,7 +97,7 @@ bool BufferedRF24::max_retry_interrupt()
 bool BufferedRF24::data_sent_interrupt()
 {
   uint8_t rembuf[32] ;
-  uint16_t size = 0;
+  uint16_t size = 0, ret = 0;
   uint8_t packet_size = get_transmit_width() ;
   
   fprintf(stdout, "Data sent interrupt\n") ;
@@ -117,10 +122,14 @@ bool BufferedRF24::data_sent_interrupt()
     memset(rembuf,0,32) ; // Clear
     memcpy(rembuf, m_write_buffer+m_front_write, size) ; // Partial packet write
 
-    m_front_write += write_packet(rembuf) ;
+    ret = write_packet(rembuf) ;
+    if (ret == 0) m_status = io_err ; // flag an error
+    m_front_write += ret ;
   }else{
     // Write another packet
-    m_front_write += write_packet(m_write_buffer+m_front_write) ;
+    ret = write_packet(m_write_buffer+m_front_write) ;
+    if (ret == 0) m_status = io_err ; // flag an error
+    m_front_write += ret ;
   }
    
   pthread_mutex_unlock(&m_rwlock) ;
@@ -144,6 +153,7 @@ uint16_t BufferedRF24::read(uint8_t *buffer, uint16_t length, uint8_t pipe, bool
     }
     // Wait until there's buffer to read
     while((len=m_read_size - m_front_read) == 0){
+      if(m_status == io_err) throw BuffIOErr("error blocking read") ;
       nano_sleep(0,10000000) ;
     }
   }
@@ -173,7 +183,10 @@ bool BufferedRF24::data_received_interrupt()
   uint8_t size = get_rx_data_size(pipe) ;
   while(!is_rx_empty()){
     if ((RF24_BUFFER_READ - m_read_size) < size) return false ; // no more buffer
-    if (!read_payload(m_read_buffer[pipe]+m_read_size, size)) return false ; // SPI error
+    if (!read_payload(m_read_buffer[pipe]+m_read_size, size)){
+      m_status = io_err ; // SPI error
+      return false ;
+    }
     m_read_size += size ;
   }
   return true ;

@@ -103,20 +103,25 @@ int main(int argc, char **argv)
   }
 
   uint8_t buffer[33] ;
-  for (;;){
-    uint16_t bytes = radio.read(buffer, payloadwidth, 0, block) ;
-    while(bytes){
-      buffer[payloadwidth] = '\0' ;
-      fprintf(stdout, "DATA: %s hex{", buffer) ;
-      for (uint8_t i=0; i<payloadwidth;i++){
-	fprintf(stdout, " %X ", buffer[i]) ;
+  try{
+    for (;;){
+      uint16_t bytes = radio.read(buffer, payloadwidth, 0, block) ;
+      while(bytes){
+	buffer[payloadwidth] = '\0' ;
+	fprintf(stdout, "DATA: %s hex{", buffer) ;
+	for (uint8_t i=0; i<payloadwidth;i++){
+	  fprintf(stdout, " %X ", buffer[i]) ;
+	}
+	fprintf(stdout, "}\n") ;
+	bytes = radio.read(buffer, payloadwidth, 0, false) ;	
       }
-      fprintf(stdout, "}\n") ;
-      bytes = radio.read(buffer, payloadwidth, 0, false) ;
+      if(!block) sleep(5);
     }
-    
-    if(!block) sleep(5);
+
+  }catch(BuffIOErr &e){
+    fprintf(stderr, "%s\n", e.what()) ;
   }
+
   pi.output(ce_pin, IHardwareGPIO::low) ;
   
   return 0 ;
