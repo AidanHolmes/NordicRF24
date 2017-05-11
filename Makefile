@@ -29,8 +29,8 @@ CMDEXE = rf24cmd
 .PHONY: all
 all: $(PINGEXE) $(SENDEXE) $(RECVEXE) $(CMDEXE)
 
-$(PINGEXE): $(OBJS_PING) $(OBJS_CMD) libhw
-	$(CXX) $(LDFLAGS) $(OBJS_PING) $(OBJS_CMD) $(LIBS) -o $@
+$(PINGEXE): $(OBJS_PING) libhw
+	$(CXX) $(LDFLAGS) $(OBJS_PING) $(LIBS) -o $@
 
 $(RECVEXE): $(OBJS_RECV) $(OBJS_CMD) libhw
 	$(CXX) $(LDFLAGS) $(OBJS_RECV) $(OBJS_CMD) $(LIBS) -o $@

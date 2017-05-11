@@ -20,17 +20,110 @@
 #include <stdio.h>
 #include <unistd.h>
 #include <string.h>
+#include <signal.h>
+#include <stdlib.h>
+
+#define ADDR_WIDTH 5
+#define PAYLOAD_WIDTH 8
+
+wPi pi ;
+BufferedRF24 *pradio = NULL;
+
+int opt_irq = 0,
+  opt_ce = 0,
+  opt_listen = 0,
+  opt_channel = 0,
+  opt_message = 0,
+  opt_speed = 1;
+bool opt_block = false ;
+
+
+void siginterrupt(int sig)
+{
+  printf("\nExiting and resetting radio\n") ;
+  pi.output(opt_ce, IHardwareGPIO::low) ;
+  if (pradio) pradio->reset_rf24() ;
+  exit(EXIT_SUCCESS) ;
+}
 
 int main(int argc, char **argv)
 {
+  const char usage[] = "Usage: %s -c ce -i irq [-o channel] [-a address] [-s 250|1|2] [-l] [-s message]\n" ;
+  int opt = 0 ;
+  uint8_t rf24address[ADDR_WIDTH] ;
+  bool opt_addr_set = false ;
+  struct sigaction siginthandle ;
+  char szMessage[RF24_BUFFER_WRITE+1] ;
+
   BufferedRF24 radio ;
+
+  pradio = &radio;
+
+  siginthandle.sa_handler = siginterrupt ;
+  sigemptyset(&siginthandle.sa_mask) ;
+  siginthandle.sa_flags = 0 ;
+
+  if (sigaction(SIGINT, &siginthandle, NULL) < 0){
+    fprintf(stderr,"Failed to set signal handler\n") ;
+    return EXIT_FAILURE ;
+  }
   
-  // BCM pin
-  const int ce_pin = 12 ;
-  const int irq_pin = 13 ;
+  while ((opt = getopt(argc, argv, "s:i:c:o:a:lm:b")) != -1) {
+    switch (opt) {
+    case 'l': // listen
+      opt_listen = 1;
+      break;
+    case 'm': // message
+      opt_message = 1 ;
+      strncpy(szMessage, optarg, RF24_BUFFER_WRITE) ;
+      break;
+    case 'i': // IRQ pin
+      opt_irq = atoi(optarg) ;
+      break ;
+    case 'c': // CE pin
+      opt_ce = atoi(optarg) ;
+      break ;
+    case 'o': // channel
+      opt_channel = atoi(optarg) ;
+      break;
+    case 's': // speed
+      opt_speed = atoi(optarg) ;
+      break ;
+    case 'b': // blocking
+      opt_block = true ;
+      break ;
+    case 'a': // address
+      if (!straddr_to_addr(optarg, rf24address, ADDR_WIDTH)){
+	fprintf(stderr, "Invalid address\n") ;
+	return EXIT_FAILURE ;
+      }
+      opt_addr_set = true;
+      break;
+    default: // ? opt
+      fprintf(stderr, usage, argv[0]);
+      exit(EXIT_FAILURE);
+    }
+  }
   
-  // Create new wiringPi instance
-  wPi pi ; // init GPIO
+  if (!opt_ce || !opt_irq){
+    fprintf(stderr, usage, argv[0]);
+    exit(EXIT_FAILURE);
+  }
+
+  switch (opt_speed){
+  case 1:
+    opt_speed = RF24_1MBPS ;
+    break ;
+  case 2:
+    opt_speed = RF24_2MBPS ;
+    break ;
+  case 250:
+    opt_speed = RF24_250KBPS ;
+    break ;
+  default:
+    fprintf(stderr, "Invalid speed option. Use 250, 1 or 2\n") ;
+    return EXIT_FAILURE ;
+  }
 
   // Create spidev instance. wiringPi interface doesn't seem to work
   // The SPIDEV code has more configuration to handle devices. 
@@ -51,20 +144,20 @@ int main(int argc, char **argv)
   spi.setSpeed(6000000) ;
   radio.set_spi(&spi) ;
 
-  if (!radio.set_gpio(&pi, ce_pin, irq_pin)){
+  if (!radio.set_gpio(&pi, opt_ce, opt_irq)){
     fprintf(stderr, "Failed to initialise GPIO\n") ;
     return 1 ;
   }
   
   // Transmit and receive address must match receiver address to receive ACKs
-  uint8_t rx_address[5] = {0xC2,0xC2,0xC2,0xC2,0xC2} ;
-  uint8_t tx_address[5] = {0xC2,0xC2,0xC2,0xC2,0xC2} ;
-  uint8_t addr_len = 5 ;
+  uint8_t rx_address[ADDR_WIDTH] = {0xC2,0xC2,0xC2,0xC2,0xC2} ;
+  uint8_t tx_address[ADDR_WIDTH] = {0xE7,0xE7,0xE7,0xE7,0xE7} ;
+  uint8_t addr_len = ADDR_WIDTH ;
   
   radio.auto_update(true);
   if (!radio.set_address_width(addr_len)) fprintf(stderr, "Cannot set_address_width\n") ;
   radio.set_retry(15,15);
-  radio.set_channel(0x60) ; // 2.496GHz
+  radio.set_channel(opt_channel) ; // 2.400GHz + channel MHz
   //radio.set_pipe_ack(0,true) ;
   radio.set_power_level(RF24_0DBM) ;
   radio.crc_enabled(true) ;
@@ -72,15 +165,17 @@ int main(int argc, char **argv)
 
   //radio.set_payload_width(0,8) ;  // Must match receivers data length
   radio.enable_pipe(1, false) ; // disable unused pipes
-  radio.set_data_rate(RF24_250KBPS) ; // slow data rate
+  radio.set_data_rate(opt_speed) ; // slow data rate
 
   // Set addresses
-  radio.set_tx_address(tx_address, &addr_len) ;
-  radio.set_rx_address(0,rx_address, &addr_len) ;
+  //radio.set_tx_address(tx_address, &addr_len) ;
+  //radio.set_rx_address(0,rx_address, &addr_len) ;
 
-  radio.set_transmit_width(8);
+  radio.set_transmit_width(PAYLOAD_WIDTH);
+
+  radio.receiver(true) ;
+  if (opt_message) radio.receiver(false) ;
   
-  radio.receiver(false) ;
   radio.power_up(true) ;
   nano_sleep(0,130000) ; // 130 micro seconds
 
@@ -90,17 +185,41 @@ int main(int argc, char **argv)
 
   print_state(&radio) ;
 
-  uint8_t send_me[] = "Hello World" ;
-  try{
-    uint16_t sent = radio.write(send_me, strlen((char*)send_me), true) ;
-    printf("Blocking write returned %d\n", sent) ;
-  }catch(BuffIOErr &e){
-    fprintf(stderr, "%s\n", e.what()) ;
-  }catch(BuffMaxRetry &e){
-    fprintf(stderr, "Message failed to deliver\n") ;
+  uint8_t addr_width = ADDR_WIDTH ;
+  if (opt_listen){
+    if (!opt_addr_set) memcpy(rf24address, rx_address, ADDR_WIDTH) ;
+    if (!radio.set_rx_address(1, rf24address, &addr_width)) return EXIT_FAILURE;
+    if (!pi.output(opt_ce, IHardwareGPIO::high)) return EXIT_FAILURE ;
+
+    uint8_t buffer[33] ;
+    try{
+      for ( ; ; ){
+	uint16_t bytes = radio.read(buffer, 32, 0, opt_block) ;
+	while(bytes){
+	  buffer[32] = '\0' ;
+	  fprintf(stdout, "%s", buffer) ;
+	  bytes = radio.read(buffer, 32, 0, opt_block) ;
+	}
+	if(!opt_block) sleep(1);
+      }
+    }catch(BuffIOErr &e){
+      fprintf(stderr, "%s\n", e.what()) ;
+    }
+  }else if (opt_message){
+    if (!opt_addr_set) memcpy(rf24address, tx_address, ADDR_WIDTH) ;
+    if (!radio.set_tx_address(rf24address, &addr_width)){printf("failed to set tx address\n"); return EXIT_FAILURE ;}
+    if (!radio.set_rx_address(0, rf24address, &addr_width)){printf("failed to set tx address\n"); return EXIT_FAILURE ;}
+
+    try{
+      radio.write((uint8_t*)szMessage, strlen(szMessage), opt_block) ;
+    }catch(BuffIOErr &e){
+      fprintf(stderr, "%s\n", e.what()) ;
+    }catch(BuffMaxRetry &e){
+      fprintf(stderr, "Message failed to deliver\n") ;
+    }
   }
-  sleep(1);
   radio.reset_rf24();
-    
+  pi.output(opt_ce, IHardwareGPIO::low);
+
   return 0 ;
 }

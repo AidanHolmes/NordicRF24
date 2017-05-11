@@ -209,31 +209,7 @@ void PingRF24::print_summary()
 #include <string.h>
 #include <time.h>
 #include <signal.h>
-
-bool straddr_to_addr(char *str, uint8_t *rf24addr)
-{
-  int shift = 4;
-  memset(rf24addr, 0, ADDR_WIDTH) ;
-  if (strlen(str) != ADDR_WIDTH * 2) return false ;
-  // Write backwards so MSB is at the end of the buffer
-  // and LSB is written first
-  uint8_t *p = rf24addr+ADDR_WIDTH-1 ; 
-  for (int i = 0; i < ADDR_WIDTH * 2; i++){
-    if (str[i] >= '0' && str[i] <= '9'){
-      *p |= ((str[i] - '0') << shift) ;
-    }else if(str[i] >= 'A' && str[i] <= 'F'){
-      *p |= ((str[i] - 'A' + 10) << shift) ;
-    }else if(str[i] >= 'a' && str[i] <= 'f'){
-      *p |= ((str[i] - 'a' + 10) << shift) ;
-    }
-    
-    if (shift == 0){
-      p-- ;
-    }
-    shift = (shift == 0)?4:0 ;
-  }
-  return true ;
-}
+#include "radioutil.c"
 
 PingRF24 *pradio =NULL ;
 
@@ -283,7 +259,7 @@ int main(int argc, char *argv[])
       speed = atoi(optarg) ;
       break ;
     case 'a': // address
-      if (!straddr_to_addr(optarg, rf24address)) return EXIT_FAILURE ;
+      if (!straddr_to_addr(optarg, rf24address, 5)) return EXIT_FAILURE ;
       addr_set = true;
       break;
     case 'n': // pings

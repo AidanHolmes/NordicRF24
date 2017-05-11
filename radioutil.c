@@ -1,6 +1,7 @@
 #include "radioutil.h"
 #include <stdio.h>
 #include <errno.h>
+#include <string.h>
 
 void print_state(NordicRF24 *pRadio)
 {
@@ -59,4 +60,31 @@ void nano_sleep(time_t sec, long nano)
   while (nanosleep(&ts, &trem) == -1 && errno == EINTR){
     ts=trem ;
   }
+}
+
+int straddr_to_addr(const char *str, uint8_t *rf24addr, const unsigned int len)
+{
+  int shift = 4;
+  if (len == 0) return 0 ;
+  
+  memset(rf24addr, 0, len) ;
+  if (strlen(str) != len * 2) return 0 ;
+  // Write backwards so MSB is at the end of the buffer
+  // and LSB is written first
+  uint8_t *p = rf24addr+len-1 ; 
+  for (unsigned int i = 0; i < len * 2; i++){
+    if (str[i] >= '0' && str[i] <= '9'){
+      *p |= ((str[i] - '0') << shift) ;
+    }else if(str[i] >= 'A' && str[i] <= 'F'){
+      *p |= ((str[i] - 'A' + 10) << shift) ;
+    }else if(str[i] >= 'a' && str[i] <= 'f'){
+      *p |= ((str[i] - 'a' + 10) << shift) ;
+    }
+    
+    if (shift == 0){
+      p-- ;
+    }
+    shift = (shift == 0)?4:0 ;
+  }
+  return 1 ;
 }
