@@ -86,7 +86,7 @@ protected:
 
   uint8_t m_read_buffer[RF24_PIPES][RF24_BUFFER_READ];
   uint8_t m_write_buffer[RF24_BUFFER_WRITE];
-  uint16_t m_read_size, m_front_read ;
+  uint16_t m_read_size[RF24_PIPES], m_front_read[RF24_PIPES] ;
   uint16_t m_write_size, m_front_write ;
 
   enStatus m_status ;

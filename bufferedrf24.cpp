@@ -5,17 +5,18 @@
 
 BufferedRF24::BufferedRF24()
 {
-  m_read_size = 0;  
+  for (int i = 0; i < RF24_PIPES; i++){
+    m_read_size[i] = 0;  
+    m_front_read[i] = 0 ;
+  }
   m_write_size = 0;
-  m_front_read = 0 ;
   m_front_write = 0 ;
   m_status = ok ;
-  
+
   if (pthread_mutex_init(&m_rwlock, NULL) != 0){
     throw BuffException("Mutex creation failed") ;
-    //fprintf(stderr, "Mutex creation failed\n") ;
+    fprintf(stderr, "ASSERT ERROR: Failed to create mutex\n") ;
   }
-  
 }
 
 BufferedRF24::~BufferedRF24()
@@ -100,13 +101,10 @@ bool BufferedRF24::data_sent_interrupt()
   uint16_t size = 0, ret = 0;
   uint8_t packet_size = get_transmit_width() ;
   
-  fprintf(stdout, "Data sent interrupt\n") ;
-
   pthread_mutex_lock(&m_rwlock) ;
 
   if (m_front_write > m_write_size) size = 0 ;
   else size = m_write_size - m_front_write ;
-  printf("%d bytes left to write\n", size) ;
 
   if (size == 0){
     // No data to send. End of transmission
@@ -144,7 +142,7 @@ uint16_t BufferedRF24::read(uint8_t *buffer, uint16_t length, uint8_t pipe, bool
 
   if (pipe >= RF24_PIPES) return 0 ; // out of range
   
-  buff_size = m_read_size - m_front_read ; 
+  buff_size = m_read_size[pipe] - m_front_read[pipe] ; 
   if (length > buff_size) len = buff_size ; // length larger than remaining buffer
 
   if (len == 0){
@@ -152,22 +150,23 @@ uint16_t BufferedRF24::read(uint8_t *buffer, uint16_t length, uint8_t pipe, bool
       return 0 ; // buffer is empty
     }
     // Wait until there's buffer to read
-    while((len=m_read_size - m_front_read) == 0){
+    while((len=m_read_size[pipe] - m_front_read[pipe]) == 0){
       if(m_status == io_err) throw BuffIOErr("error blocking read") ;
       nano_sleep(0,10000000) ;
     }
+    if (len > length) len = length ; // ensure just enough data is read
   }
   
   pthread_mutex_lock(&m_rwlock) ;
 
-  memcpy(buffer, m_read_buffer[pipe]+m_front_read, len) ;
+  if (len > 0) memcpy(buffer, m_read_buffer[pipe]+m_front_read[pipe], len) ;
 
-  if (length < buff_size){
+  if (len < buff_size){
     // Still buffer remaining
-    m_front_read += length ;
+    m_front_read[pipe] += len ;
   }else{
-    m_front_read = 0 ; // reset lead pointer to buffer
-    m_read_size = 0 ; // reset and reuse buffer
+    m_front_read[pipe] = 0 ; // reset lead pointer to buffer
+    m_read_size[pipe] = 0 ; // reset and reuse buffer
   }
 
   pthread_mutex_unlock(&m_rwlock) ;
@@ -182,12 +181,12 @@ bool BufferedRF24::data_received_interrupt()
   if (pipe == RF24_PIPE_EMPTY) return true ; // no pipe
   uint8_t size = get_rx_data_size(pipe) ;
   while(!is_rx_empty()){
-    if ((RF24_BUFFER_READ - m_read_size) < size) return false ; // no more buffer
-    if (!read_payload(m_read_buffer[pipe]+m_read_size, size)){
+    if ((RF24_BUFFER_READ - m_read_size[pipe]) < size) return false ; // no more buffer
+    if (!read_payload(m_read_buffer[pipe]+m_read_size[pipe], size)){
       m_status = io_err ; // SPI error
       return false ;
     }
-    m_read_size += size ;
+    m_read_size[pipe] += size ;
   }
   return true ;
 }

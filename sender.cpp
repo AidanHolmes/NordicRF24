@@ -24,7 +24,7 @@
 #include <stdlib.h>
 
 #define ADDR_WIDTH 5
-#define PAYLOAD_WIDTH 8
+#define PAYLOAD_WIDTH 32
 
 wPi pi ;
 BufferedRF24 *pradio = NULL;
@@ -150,12 +150,11 @@ int main(int argc, char **argv)
   }
   
   // Transmit and receive address must match receiver address to receive ACKs
-  uint8_t rx_address[ADDR_WIDTH] = {0xC2,0xC2,0xC2,0xC2,0xC2} ;
-  uint8_t tx_address[ADDR_WIDTH] = {0xE7,0xE7,0xE7,0xE7,0xE7} ;
+  uint8_t def_address[ADDR_WIDTH] = {0xC2,0xC2,0xC2,0xC2,0xC2} ;
   uint8_t addr_len = ADDR_WIDTH ;
   
   radio.auto_update(true);
-  if (!radio.set_address_width(addr_len)) fprintf(stderr, "Cannot set_address_width\n") ;
+  if (!radio.set_address_width(ADDR_WIDTH)) fprintf(stderr, "Cannot set_address_width\n") ;
   radio.set_retry(15,15);
   radio.set_channel(opt_channel) ; // 2.400GHz + channel MHz
   //radio.set_pipe_ack(0,true) ;
@@ -163,13 +162,9 @@ int main(int argc, char **argv)
   radio.crc_enabled(true) ;
   radio.set_2_byte_crc(true) ;
 
-  //radio.set_payload_width(0,8) ;  // Must match receivers data length
-  radio.enable_pipe(1, false) ; // disable unused pipes
+  radio.set_payload_width(0,PAYLOAD_WIDTH) ;  // Must match receivers data length
+  radio.enable_pipe(1, false) ; // disable pipe 1
   radio.set_data_rate(opt_speed) ; // slow data rate
-
-  // Set addresses
-  //radio.set_tx_address(tx_address, &addr_len) ;
-  //radio.set_rx_address(0,rx_address, &addr_len) ;
 
   radio.set_transmit_width(PAYLOAD_WIDTH);
 
@@ -183,35 +178,42 @@ int main(int argc, char **argv)
   radio.flushtx();
   radio.clear_interrupts() ;
 
-  print_state(&radio) ;
-
   uint8_t addr_width = ADDR_WIDTH ;
-  if (opt_listen){
-    if (!opt_addr_set) memcpy(rf24address, rx_address, ADDR_WIDTH) ;
-    if (!radio.set_rx_address(1, rf24address, &addr_width)) return EXIT_FAILURE;
+  if (opt_listen){ // Listen for messages
+    if (!opt_addr_set) memcpy(rf24address, def_address, ADDR_WIDTH) ;
+    // Set pipe 1 with the receiving address
+    if (!radio.set_rx_address(0, rf24address, &addr_len)) return EXIT_FAILURE;
+    print_state(&radio) ; // print the radio config before receiving data
+
+    // Start listening
     if (!pi.output(opt_ce, IHardwareGPIO::high)) return EXIT_FAILURE ;
 
-    uint8_t buffer[33] ;
+    uint8_t buffer[PAYLOAD_WIDTH+1] ;
     try{
       for ( ; ; ){
-	uint16_t bytes = radio.read(buffer, 32, 0, opt_block) ;
+	// Read a byte buffer, which is the max payload width
+	uint16_t bytes = radio.read(buffer, PAYLOAD_WIDTH, 0, opt_block) ;
 	while(bytes){
-	  buffer[32] = '\0' ;
+	  buffer[PAYLOAD_WIDTH] = '\0' ;
 	  fprintf(stdout, "%s", buffer) ;
-	  bytes = radio.read(buffer, 32, 0, opt_block) ;
+	  fflush(stdout) ;
+	  bytes = radio.read(buffer, PAYLOAD_WIDTH, 0, opt_block) ;
 	}
-	if(!opt_block) sleep(1);
+	if(!opt_block) sleep(1); // put in a sleep to stop overloading the CPU
       }
     }catch(BuffIOErr &e){
-      fprintf(stderr, "%s\n", e.what()) ;
+      fprintf(stderr, "\n%s\n", e.what()) ;
     }
-  }else if (opt_message){
-    if (!opt_addr_set) memcpy(rf24address, tx_address, ADDR_WIDTH) ;
+  }else if (opt_message){ // Send a message
+    // Use the default address if one isn't specified on the command line
+    if (!opt_addr_set) memcpy(rf24address, def_address, ADDR_WIDTH) ;
+    // RX and TX addresses have to match for the sender.
     if (!radio.set_tx_address(rf24address, &addr_width)){printf("failed to set tx address\n"); return EXIT_FAILURE ;}
     if (!radio.set_rx_address(0, rf24address, &addr_width)){printf("failed to set tx address\n"); return EXIT_FAILURE ;}
 
     try{
       radio.write((uint8_t*)szMessage, strlen(szMessage), opt_block) ;
+      if (!opt_block) sleep(1) ; // sleep to give the transmit a chance
     }catch(BuffIOErr &e){
       fprintf(stderr, "%s\n", e.what()) ;
     }catch(BuffMaxRetry &e){
