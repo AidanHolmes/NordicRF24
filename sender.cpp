@@ -152,6 +152,7 @@ int main(int argc, char **argv)
   // Transmit and receive address must match receiver address to receive ACKs
   uint8_t def_address[ADDR_WIDTH] = {0xC2,0xC2,0xC2,0xC2,0xC2} ;
   uint8_t addr_len = ADDR_WIDTH ;
+  uint16_t bytesread = 0 ;
   
   radio.auto_update(true);
   if (!radio.set_address_width(ADDR_WIDTH)) fprintf(stderr, "Cannot set_address_width\n") ;
@@ -192,12 +193,13 @@ int main(int argc, char **argv)
     try{
       for ( ; ; ){
 	// Read a byte buffer, which is the max payload width
-	uint16_t bytes = radio.read(buffer, PAYLOAD_WIDTH, 0, opt_block) ;
-	while(bytes){
+	bytesread = radio.read(buffer, PAYLOAD_WIDTH, 0, opt_block) ;
+	
+	while(bytesread > 0){
 	  buffer[PAYLOAD_WIDTH] = '\0' ;
 	  fprintf(stdout, "%s", buffer) ;
 	  fflush(stdout) ;
-	  bytes = radio.read(buffer, PAYLOAD_WIDTH, 0, opt_block) ;
+	  bytesread = radio.read(buffer, PAYLOAD_WIDTH, 0, opt_block) ;
 	}
 	if(!opt_block) sleep(1); // put in a sleep to stop overloading the CPU
       }

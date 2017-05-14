@@ -28,7 +28,8 @@ uint16_t BufferedRF24::write(uint8_t *buffer, uint16_t length, bool blocking)
 {
   uint16_t buffer_remaining = RF24_BUFFER_WRITE - m_write_size ;
   uint16_t len = length ;
-
+  uint8_t packet_size = get_transmit_width() ;
+  
   pthread_mutex_lock(&m_rwlock) ;
   // Write using remaining space in the data buffer
   if (buffer_remaining < length){
@@ -38,12 +39,24 @@ uint16_t BufferedRF24::write(uint8_t *buffer, uint16_t length, bool blocking)
       return 0 ;
     }
   }
-  
+
   memcpy(m_write_buffer+m_write_size, buffer, len) ;
   if (m_write_size == 0){
     // Fresh write
     m_status = ok ;
-    m_front_write = write_packet(m_write_buffer) ;
+
+    // Initial data is smaller than a packet.
+    // pad with zeros. Note that whole packets really should be used
+    // by an implementer of this class.
+    if (len < packet_size){
+      uint8_t pktbuff[32] ; // max length buffer
+      memset(pktbuff, 0, 32); // use zeros to pad packet
+      memcpy(pktbuff, buffer, len) ;
+      m_front_write = write_packet(pktbuff) ;
+    }else{
+      // Normal write of a full packet of data
+      m_front_write = write_packet(m_write_buffer) ;
+    }
     if (!m_front_write){
       pthread_mutex_unlock(&m_rwlock) ;
       throw BuffIOErr("write_packet failed") ;
@@ -97,7 +110,7 @@ bool BufferedRF24::max_retry_interrupt()
 
 bool BufferedRF24::data_sent_interrupt()
 {
-  uint8_t rembuf[32] ;
+  uint8_t rembuf[33] ;
   uint16_t size = 0, ret = 0;
   uint8_t packet_size = get_transmit_width() ;
   
@@ -121,14 +134,12 @@ bool BufferedRF24::data_sent_interrupt()
     memcpy(rembuf, m_write_buffer+m_front_write, size) ; // Partial packet write
 
     ret = write_packet(rembuf) ;
-    if (ret == 0) m_status = io_err ; // flag an error
-    m_front_write += ret ;
   }else{
     // Write another packet
     ret = write_packet(m_write_buffer+m_front_write) ;
-    if (ret == 0) m_status = io_err ; // flag an error
-    m_front_write += ret ;
   }
+  if (ret == 0) m_status = io_err ; // flag an error
+  m_front_write += ret ;
    
   pthread_mutex_unlock(&m_rwlock) ;
 
@@ -141,14 +152,12 @@ uint16_t BufferedRF24::read(uint8_t *buffer, uint16_t length, uint8_t pipe, bool
   uint16_t buff_size = 0 ;
 
   if (pipe >= RF24_PIPES) return 0 ; // out of range
-  
+
+  // Check if there's unread data in the buffer
   buff_size = m_read_size[pipe] - m_front_read[pipe] ; 
   if (length > buff_size) len = buff_size ; // length larger than remaining buffer
 
-  if (len == 0){
-    if (!blocking){
-      return 0 ; // buffer is empty
-    }
+  if (len == 0 && blocking){
     // Wait until there's buffer to read
     while((len=m_read_size[pipe] - m_front_read[pipe]) == 0){
       if(m_status == io_err) throw BuffIOErr("error blocking read") ;
@@ -159,14 +168,17 @@ uint16_t BufferedRF24::read(uint8_t *buffer, uint16_t length, uint8_t pipe, bool
   
   pthread_mutex_lock(&m_rwlock) ;
 
-  if (len > 0) memcpy(buffer, m_read_buffer[pipe]+m_front_read[pipe], len) ;
-
-  if (len < buff_size){
-    // Still buffer remaining
+  if (len > 0){
+    memcpy(buffer, m_read_buffer[pipe]+m_front_read[pipe], len) ;
     m_front_read[pipe] += len ;
-  }else{
+  }
+  
+  // Check if there's anymore data in the buffer following this read
+  if((m_front_read[pipe] > m_read_size[pipe]) ||
+     (m_read_size[pipe] - m_front_read[pipe] == 0)){
     m_front_read[pipe] = 0 ; // reset lead pointer to buffer
     m_read_size[pipe] = 0 ; // reset and reuse buffer
+    m_status = ok ;
   }
 
   pthread_mutex_unlock(&m_rwlock) ;
@@ -180,13 +192,23 @@ bool BufferedRF24::data_received_interrupt()
   uint8_t pipe = get_pipe_available();
   if (pipe == RF24_PIPE_EMPTY) return true ; // no pipe
   uint8_t size = get_rx_data_size(pipe) ;
+
+  pthread_mutex_lock(&m_rwlock) ;
+  
   while(!is_rx_empty()){
-    if ((RF24_BUFFER_READ - m_read_size[pipe]) < size) return false ; // no more buffer
+    if ((RF24_BUFFER_READ - m_read_size[pipe]) < size){
+      pthread_mutex_unlock(&m_rwlock) ;
+      return false ; // no more buffer
+    }
     if (!read_payload(m_read_buffer[pipe]+m_read_size[pipe], size)){
       m_status = io_err ; // SPI error
+      pthread_mutex_unlock(&m_rwlock) ;
       return false ;
     }
     m_read_size[pipe] += size ;
   }
+  
+  pthread_mutex_unlock(&m_rwlock) ;
+
   return true ;
 }
