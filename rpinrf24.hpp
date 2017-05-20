@@ -17,6 +17,12 @@
 
 #include "hardware.hpp"
 #include <vector>
+#include <exception>
+#include <pthread.h>
+#include <string.h>
+
+#define MAX_RF24_ADDRESS_LEN 5
+#define MIN_RF24_ADDRESS_LEN 3
 #define MAX_RXTXBUF 33
 #define RF24_PIPES 6
 #define RF24_250KBPS 1
@@ -33,6 +39,30 @@
 #define AR_FIFO if(m_auto_update)read_fifo_status()
 #define AR_FEAT if(m_auto_update)read_feature()
 #define AW_FEAT if(m_auto_update)write_feature()
+
+const int excptlen = 1024 ;
+
+class RF24Exception : public std::exception{
+public:
+  RF24Exception(){m_remain = excptlen;} ;
+  RF24Exception(const char *szException){
+    do_except("RF24 exception: ", szException) ;
+  }
+  void do_except(const char *szStr, const char *szException){
+    strncpy(m_szException, szStr, excptlen-1) ;
+    int len = strlen(szStr) ;
+    m_remain = excptlen - 1 - len ;
+    strncpy(m_szException+len, szException, m_remain);
+  }
+  virtual const char* what() const throw(){
+    return m_szException ;
+  }
+protected:
+  char m_szException[excptlen];
+  int m_remain ;
+} ;
+
+
 
 class NordicRF24{
 public:
@@ -277,6 +307,9 @@ protected:
   uint8_t m_read_buffer[];
 
   uint8_t m_transmit_width ;
+
+  pthread_mutex_t m_rwlock ;  
+
 private:
 
 } ;

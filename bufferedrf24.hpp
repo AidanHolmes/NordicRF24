@@ -19,31 +19,7 @@
 #define RF24_BUFFER_WRITE 1600
 
 #include "rpinrf24.hpp"
-#include <string.h>
-#include <pthread.h>
 #include <exception>
-
-const int excptlen = 1024 ;
-
-class BuffException : public std::exception{
-public:
-  BuffException(){m_remain = excptlen;} ;
-  BuffException(const char *szException){
-    do_except("Buffer Exception: ", szException) ;
-  }
-  void do_except(const char *szStr, const char *szException){
-    strncpy(m_szException, szStr, excptlen-1) ;
-    int len = strlen(szStr) ;
-    m_remain = excptlen - 1 - len ;
-    strncpy(m_szException+len, szException, m_remain);
-  }
-  virtual const char* what() const throw(){
-    return m_szException ;
-  }
-protected:
-  char m_szException[excptlen];
-  int m_remain ;
-} ;
 
 class BuffMaxRetry : public std::exception{
 public:
@@ -52,7 +28,21 @@ public:
   }
 };
 
-class BuffIOErr : public BuffException{
+class BuffOverflow : public std::exception{
+public:
+  virtual const char* what() const throw(){
+    return "Buffer exceeded, data lost" ;
+  }
+};
+
+class BuffException : public RF24Exception{
+public:
+  BuffException(const char *sz){
+    do_except("Buffer exception: ", sz) ;
+  }
+} ;
+
+class BuffIOErr : public RF24Exception{
 public:
   BuffIOErr(const char *sz){
     do_except("Buff IO Err: ", sz) ;
@@ -73,27 +63,23 @@ public:
   // Can throw BuffIOErr if blocking
   uint16_t read(uint8_t *buffer, uint16_t length, uint8_t pipe, bool blocking) ;
 
-  enum enStatus {ok,max_retry_failure,io_err} ;
+  enum enStatus {ok,max_retry_failure,io_err,buff_overflow} ;
 
   // Call the write_status if using non-blocking write calls and find out if the
   // read or write was successful. 
   enStatus get_status();
   
 protected:
-  bool data_received_interrupt() ;
-  bool max_retry_interrupt();
-  bool data_sent_interrupt();
+  virtual bool data_received_interrupt() ;
+  virtual bool max_retry_interrupt();
+  virtual bool data_sent_interrupt();
 
   uint8_t m_read_buffer[RF24_PIPES][RF24_BUFFER_READ];
   uint8_t m_write_buffer[RF24_BUFFER_WRITE];
   uint16_t m_read_size[RF24_PIPES], m_front_read[RF24_PIPES] ;
   uint16_t m_write_size, m_front_write ;
 
-  enStatus m_status ;
-  
-private:
-  pthread_mutex_t m_rwlock ;  
-  
+  enStatus m_status ;  
 };
 
 

@@ -111,9 +111,10 @@ void NordicRF24::interrupt()
   // Only flush once using the first instance in the registered list
   // of instances
   //(*radio_instances.begin())->flushtx() ;
+  pthread_mutex_lock(&(*radio_instances.begin())->m_rwlock) ;  
   (*radio_instances.begin())->flushrx() ;
   (*radio_instances.begin())->clear_interrupts() ;
-  
+  pthread_mutex_unlock(&(*radio_instances.begin())->m_rwlock) ;  
 }
 bool NordicRF24::max_retry_interrupt()
 {
@@ -145,6 +146,11 @@ bool NordicRF24::data_received_interrupt()
 
 NordicRF24::NordicRF24()
 {
+  if (pthread_mutex_init(&m_rwlock, NULL) != 0){
+    throw RF24Exception("Mutex creation failed") ;
+    fprintf(stderr, "ASSERT ERROR: Failed to create mutex\n") ;
+  }
+
   m_pSPI = NULL ;
   m_pGPIO = NULL ;
   m_irq = 0;
@@ -270,6 +276,7 @@ NordicRF24::~NordicRF24()
       break;
     }
   }
+  pthread_mutex_destroy(&m_rwlock) ;  
 }
 
 bool NordicRF24::set_gpio(IHardwareGPIO *pGPIO, uint8_t ce, uint8_t irq)
@@ -810,7 +817,7 @@ void NordicRF24::enable_pipe(uint8_t pipe, bool enabled)
 bool NordicRF24::set_address_width(uint8_t width)
 {
   // Check for valid byte address length (3, 4 or 5 bytes)
-  if (width > 5 || width < 3) return false ;
+  if (width > MAX_RF24_ADDRESS_LEN || width < MIN_RF24_ADDRESS_LEN) return false ;
 
   uint8_t reg = width - 2 ;
   

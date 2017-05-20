@@ -12,16 +12,11 @@ BufferedRF24::BufferedRF24()
   m_write_size = 0;
   m_front_write = 0 ;
   m_status = ok ;
-
-  if (pthread_mutex_init(&m_rwlock, NULL) != 0){
-    throw BuffException("Mutex creation failed") ;
-    fprintf(stderr, "ASSERT ERROR: Failed to create mutex\n") ;
-  }
 }
 
 BufferedRF24::~BufferedRF24()
 {
-  pthread_mutex_destroy(&m_rwlock) ;  
+
 }
 
 uint16_t BufferedRF24::write(uint8_t *buffer, uint16_t length, bool blocking)
@@ -44,7 +39,7 @@ uint16_t BufferedRF24::write(uint8_t *buffer, uint16_t length, bool blocking)
   if (m_write_size == 0){
     // Fresh write
     m_status = ok ;
-
+    flushtx() ; // TX buffer may have unsent data if previously failed
     // Initial data is smaller than a packet.
     // pad with zeros. Note that whole packets really should be used
     // by an implementer of this class.
@@ -71,10 +66,10 @@ uint16_t BufferedRF24::write(uint8_t *buffer, uint16_t length, bool blocking)
     // release thread locks
     pthread_mutex_unlock(&m_rwlock) ;
     while(m_write_size > 0){
-      if (m_status == max_retry_failure) throw BuffMaxRetry() ;
-      else if(m_status == io_err) throw BuffIOErr("error blocking write") ;
+      if(m_status == io_err) throw BuffIOErr("error blocking write") ;
       nano_sleep(0,100000) ; // 1 ms
     }
+    if (m_status == max_retry_failure) throw BuffMaxRetry() ;
     return written ;
   }
     
@@ -90,12 +85,7 @@ BufferedRF24::enStatus BufferedRF24::get_status()
 
 bool BufferedRF24::max_retry_interrupt()
 {
-  //uint16_t size = 0;
-
-  printf ("Received max try interrupt. Cancel transmission\n") ;
   pthread_mutex_lock(&m_rwlock) ;
-
-  //size = m_write_size - m_front_write ;
 
   m_write_size = m_front_write = 0 ; // Reset
   flushtx() ;
@@ -112,9 +102,9 @@ bool BufferedRF24::data_sent_interrupt()
 {
   uint8_t rembuf[33] ;
   uint16_t size = 0, ret = 0;
-  uint8_t packet_size = get_transmit_width() ;
   
   pthread_mutex_lock(&m_rwlock) ;
+  uint8_t packet_size = get_transmit_width() ;
 
   if (m_front_write > m_write_size) size = 0 ;
   else size = m_write_size - m_front_write ;
@@ -161,6 +151,7 @@ uint16_t BufferedRF24::read(uint8_t *buffer, uint16_t length, uint8_t pipe, bool
     // Wait until there's buffer to read
     while((len=m_read_size[pipe] - m_front_read[pipe]) == 0){
       if(m_status == io_err) throw BuffIOErr("error blocking read") ;
+      else if(m_status == buff_overflow) throw BuffOverflow() ;
       nano_sleep(0,10000000) ;
     }
     if (len > length) len = length ; // ensure just enough data is read
@@ -188,15 +179,17 @@ uint16_t BufferedRF24::read(uint8_t *buffer, uint16_t length, uint8_t pipe, bool
 
 bool BufferedRF24::data_received_interrupt()
 {
-  //if (!read_status()) return false ; // status already read in interrupt()
+  pthread_mutex_lock(&m_rwlock) ;
   uint8_t pipe = get_pipe_available();
+  pthread_mutex_unlock(&m_rwlock) ;
   if (pipe == RF24_PIPE_EMPTY) return true ; // no pipe
-  uint8_t size = get_rx_data_size(pipe) ;
 
   pthread_mutex_lock(&m_rwlock) ;
+  uint8_t size = get_rx_data_size(pipe) ;
   
   while(!is_rx_empty()){
     if ((RF24_BUFFER_READ - m_read_size[pipe]) < size){
+      m_status = buff_overflow ;
       pthread_mutex_unlock(&m_rwlock) ;
       return false ; // no more buffer
     }
