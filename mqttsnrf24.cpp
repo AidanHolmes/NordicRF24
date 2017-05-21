@@ -80,7 +80,6 @@ bool MqttSnRF24::data_received_interrupt()
   uint8_t pipe = get_pipe_available();
   pthread_mutex_unlock(&m_rwlock) ;
 
-  printf("Interrupt for data received\n") ;
   if (pipe == RF24_PIPE_EMPTY) return true ; // no pipe
 
   // Not using blocking reads for inbound data as everything
@@ -317,7 +316,7 @@ void MqttSnRF24::listen_mode()
   if (!m_pGPIO) throw MqttIOErr("GPIO not set") ;
   uint8_t l = m_address_len ;
 
-  printf("Listening...\n") ;
+  //printf("Listening...\n") ;
   pthread_mutex_lock(&m_rwlock) ;
   if (!m_pGPIO->output(m_ce, IHardwareGPIO::low)){
     pthread_mutex_unlock(&m_rwlock) ;
@@ -398,7 +397,7 @@ void MqttSnRF24::writemqtt(uint8_t *address,
   // includes the length field and message type
   uint8_t payload_len = len+MQTT_HDR_LEN; 
   
-  printf("Transmitting...\n") ;
+  //printf("Transmitting...\n") ;
   
   if (payload_len > MQTT_PAYLOAD_WIDTH){
     throw MqttOutOfRange("Payload too long") ;
@@ -434,7 +433,7 @@ void MqttSnRF24::writemqtt(uint8_t *address,
     throw ;
   }
   catch(BuffMaxRetry &e){
-    fprintf(stdout, "Failed to write MQTT data\n") ;
+    //fprintf(stdout, "Failed to write MQTT data\n") ;
     // ignore the exception
   }
 

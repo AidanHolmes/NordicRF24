@@ -67,10 +67,13 @@ uint16_t BufferedRF24::write(uint8_t *buffer, uint16_t length, bool blocking)
     pthread_mutex_unlock(&m_rwlock) ;
     while(m_write_size > 0){
       if(m_status == io_err) throw BuffIOErr("error blocking write") ;
-      nano_sleep(0,100000) ; // 1 ms
+      nano_sleep(0,100000) ; // 100 micro second wait
     }
     if (m_status == max_retry_failure) throw BuffMaxRetry() ;
     return written ;
+  }else{
+    // wait for the transistion settling time
+    nano_sleep(0, 130000) ; // 130 micro seconds
   }
     
   pthread_mutex_unlock(&m_rwlock) ;
@@ -102,7 +105,7 @@ bool BufferedRF24::data_sent_interrupt()
 {
   uint8_t rembuf[33] ;
   uint16_t size = 0, ret = 0;
-  
+
   pthread_mutex_lock(&m_rwlock) ;
   uint8_t packet_size = get_transmit_width() ;
 

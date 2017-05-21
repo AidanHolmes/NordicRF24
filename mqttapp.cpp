@@ -155,8 +155,8 @@ int main(int argc, char **argv)
   // Link layer specific options
   mqtt.set_retry(15,15);
   mqtt.set_channel(opt_channel) ; // 2.400GHz + channel MHz
-  mqtt.set_pipe_ack(0,true) ;
-  mqtt.set_pipe_ack(1,true) ;  
+  mqtt.set_pipe_ack(0,false) ; // Turn off ACKs
+  mqtt.set_pipe_ack(1,false) ;  // No ACK for this pipe
   mqtt.set_power_level(RF24_0DBM) ;
   mqtt.crc_enabled(true) ;
   mqtt.set_2_byte_crc(true) ;
