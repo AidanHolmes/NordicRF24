@@ -21,8 +21,9 @@
 
 #define MAX_QUEUE 50
 #define MAX_GATEWAYS 5
-#define MAX_MQTT_CLIENTID 23
+#define MAX_MQTT_CLIENTID 21
 #define MQTT_PAYLOAD_WIDTH 32
+#define MQTT_PROTOCOL 0x01
 
 class MqttException : public RF24Exception{
 public:
@@ -97,6 +98,9 @@ public:
 
   enum enType {client, gateway, forwarder} ;
 
+  //////////////////////////////////////
+  // Setup
+  
   // Powers up and configures addresses. Goes into listen
   // mode
   void initialise(enType type, uint8_t address_len, uint8_t *broadcast, uint8_t *address) ;
@@ -104,6 +108,9 @@ public:
   // Powers down the radio. Call initialise to power up again
   void shutdown() ;
 
+  ///////////////////////////////////////
+  // Settings
+  
   // Set this for gateways. Defaults to zero
   void set_gateway_id(const uint8_t gwid){m_gwid = gwid;}
   uint8_t get_gateway_id(){return m_gwid;}
@@ -114,6 +121,9 @@ public:
   void set_client_id(const char *szclientid) ;
   const char* get_client_id() ; // Returns pointer to class objects identfier
 
+  //////////////////////////////////////
+  // MQTT messages
+  
   // Send an advertise message to broadcast address
   // duration, in sec, until next advertise is broadcast 
   void advertise(uint16_t duration) ;
@@ -121,15 +131,20 @@ public:
   // Send a request for a gateway. Gateway responds with gwinfo data
   void searchgw(uint8_t radius) ;
 
+  bool connect(bool will, bool clean, uint16_t duration) ; 
+  
   // send all queued responses
   void dispatch_queue();
 
 protected:
   virtual bool data_received_interrupt() ;
-  void received_advertised(uint8_t *data, uint8_t len) ;
-  void received_searchgw(uint8_t *data, uint8_t len) ;
-  void received_gwinfo(uint8_t *data, uint8_t len) ;
+  void received_advertised(uint8_t *sender_address, uint8_t *data, uint8_t len) ;
+  void received_searchgw(uint8_t *sender_address, uint8_t *data, uint8_t len) ;
+  void received_gwinfo(uint8_t *sender_address, uint8_t *data, uint8_t len) ;
 
+  
+  uint8_t *get_gateway_address();
+  
   // Queue the data responses until dispatch is called.
   // Overwrites old queue messages without error if not dispacted quickly
   // Use as alternative to writemqtt for responses from interrupt calls

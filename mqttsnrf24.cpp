@@ -17,6 +17,22 @@
 #include <string.h>
 #include <stdio.h>
 
+#ifndef _BV
+#define _BV(x) 1 << x
+#endif
+
+#define FLAG_DUP _BV(7)
+#define FLAG_RETAIN _BV(4)
+#define FLAG_WILL _BV(3)
+#define FLAG_CLEANSESSION _BV(2)
+#define FLAG_QOS0 0
+#define FLAG_QOS1 _BV(5)
+#define FLAG_QOS2 _BV(6)
+#define FLAG_QOSN1 (_BV(5) | _BV(6))
+#define FLAG_NORMAL_TOPIC_ID 0
+#define FLAG_DEFINED_TOPIC_ID _BV(0)
+#define FLAG_SHORT_TOPIC_NAME _BV(1)
+
 #define MQTT_ADVERTISE 0x00
 #define MQTT_GWINFO 0x02
 #define MQTT_CONNECT 0x04
@@ -49,7 +65,7 @@
 
 MqttSnRF24::MqttSnRF24()
 {
-  m_address_len = 2 ; // Similar to ZigBee
+  m_address_len = MIN_RF24_ADDRESS_LEN ; // Min length
 
   // Initialise the broadcast and device address with
   // default addresses.
@@ -58,12 +74,9 @@ MqttSnRF24::MqttSnRF24()
     m_address[i] = 0xC7 ;
   }
 
-  strcpy(m_szclient_id, "me") ;
-  
+  strcpy(m_szclient_id, "me") ;  
   m_gwid = 0 ;
-
   m_mqtt_type = client ;
-
   m_queue_head = 0 ;
 }
 
@@ -75,6 +88,7 @@ MqttSnRF24::~MqttSnRF24()
 bool MqttSnRF24::data_received_interrupt()
 {
   uint8_t packet[MQTT_PAYLOAD_WIDTH] ;
+  uint8_t sender_addr[MAX_RF24_ADDRESS_LEN];
 
   pthread_mutex_lock(&m_rwlock) ;
   uint8_t pipe = get_pipe_available();
@@ -102,26 +116,28 @@ bool MqttSnRF24::data_received_interrupt()
       return false ;
     }
 
+    // Extract the sender address
+    memcpy(sender_addr, packet, m_address_len) ;
     // Read the MQTT-SN payload
-    uint8_t length = packet[0] ;
-    uint8_t messageid = packet[1] ;
+    uint8_t length = packet[0+m_address_len] ;
+    uint8_t messageid = packet[1+m_address_len] ;
     
-    if (length >= 2 && length <= MQTT_PAYLOAD_WIDTH){
+    if (length >= MQTT_HDR_LEN && length <= MQTT_PAYLOAD_WIDTH){
       // Valid length field. This may not be a MQTT message
       // for other values
-      length -= 2 ;
+      length -= MQTT_HDR_LEN ;
       switch(messageid){
       case MQTT_ADVERTISE:
 	// Gateway message received
-	received_advertised(packet+2, length) ;
+	received_advertised(sender_addr, packet+MQTT_HDR_LEN+m_address_len, length) ;
 	break;
       case MQTT_SEARCHGW:
 	// Message from client to gateway
-	received_searchgw(packet+2, length) ;
+	received_searchgw(sender_addr, packet+MQTT_HDR_LEN+m_address_len, length) ;
 	break;
       case MQTT_GWINFO:
 	// Sent by gateways, although clients can also respond (not implemented)
-	received_gwinfo(packet+2, length) ;
+	received_gwinfo(sender_addr, packet+MQTT_HDR_LEN+m_address_len, length) ;
 	break ;
 	//default:
 	// Not expected message.
@@ -133,7 +149,7 @@ bool MqttSnRF24::data_received_interrupt()
   return true ;
 }
 
-void MqttSnRF24::received_advertised(uint8_t *data, uint8_t len)
+void MqttSnRF24::received_advertised(uint8_t *sender_address, uint8_t *data, uint8_t len)
 {
   uint16_t duration = (data[1] << 8) | data[2] ; // Assuming MSB is first
   printf("ADVERTISED: {gw = %u, duration = %u}\n", data[0], duration) ;
@@ -156,21 +172,20 @@ void MqttSnRF24::received_advertised(uint8_t *data, uint8_t len)
 }
 
 
-void MqttSnRF24::received_searchgw(uint8_t *data, uint8_t len)
+void MqttSnRF24::received_searchgw(uint8_t *sender_address, uint8_t *data, uint8_t len)
 {
+  uint8_t buff[1] ;
+
   printf("SEARCHGW: {radius = %u}\n", data[0]) ;
+
   if (m_mqtt_type == gateway){
-    uint8_t buff[MAX_RF24_ADDRESS_LEN+1] ;
-    uint8_t data_len = m_address_len + 1 ;
     // Ignore radius value. This is a gw so respond with
     // a broadcast message back.
-    // Since RF24 doesn't communicate the unicast address it will be in this return packet
     buff[0] = m_gwid ;
-    memcpy(buff+1, m_address, m_address_len) ;
-    queue_response(m_broadcast, MQTT_GWINFO, buff, data_len) ;
+    queue_response(m_broadcast, MQTT_GWINFO, buff, 1) ;
   }
 }
-void MqttSnRF24::received_gwinfo(uint8_t *data, uint8_t len)
+void MqttSnRF24::received_gwinfo(uint8_t *sender_address, uint8_t *data, uint8_t len)
 {
   printf("GWINFO: {gw = %u, address = ", data[0]) ;
   for (uint8_t j=0; j < len - 1; j++) printf("%X", data[j+1]) ;
@@ -178,19 +193,13 @@ void MqttSnRF24::received_gwinfo(uint8_t *data, uint8_t len)
   
   bool gw_updated = false  ;
   if (m_mqtt_type == client){
-    uint8_t addr_len = len - 1 ;
-    if (addr_len != m_address_len){
-      // Gateway is using a different spec or hasn't set an address!
-      // Cannot process this gateway
-      return ;
-    }
     for (uint8_t i=0; i < MAX_GATEWAYS; i++){
       if (m_gwinfo[i].allocated &&
 	  m_gwinfo[i].gw_id == data[0]){
 	// Already have a record of this gateway.
 	// Update the details
-	m_gwinfo[i].address_length = addr_len ;
-	memcpy(m_gwinfo[i].address, data+1, addr_len) ;
+	m_gwinfo[i].address_length = m_address_len ;
+	memcpy(m_gwinfo[i].address, sender_address, m_address_len) ;
 	gw_updated = true ;
 	break ;
       }
@@ -199,12 +208,12 @@ void MqttSnRF24::received_gwinfo(uint8_t *data, uint8_t len)
       // Insert new gateway. Overwrite old or expired gateways
       for (uint8_t i=0; i < MAX_GATEWAYS; i++){
 	if (!m_gwinfo[i].allocated || !m_gwinfo[i].active || m_gwinfo[i].advertised_expired()){
-	  m_gwinfo[i].address_length = addr_len ;
+	  m_gwinfo[i].address_length = m_address_len ;
 	  m_gwinfo[i].allocated = true ;
 	  m_gwinfo[i].active = true ;
 	  m_gwinfo[i].gw_id = data[0];
-	  memcpy(m_gwinfo[i].address, data+1, addr_len);
-	  m_gwinfo[i].advertised(0) ; // no idea if it's going to advertise
+	  memcpy(m_gwinfo[i].address, sender_address, m_address_len);
+	  m_gwinfo[i].advertised(64800) ; // no idea if it's going to advertise
 	}
       }
     }
@@ -395,7 +404,7 @@ void MqttSnRF24::writemqtt(uint8_t *address,
   uint8_t l = m_address_len ;
   
   // includes the length field and message type
-  uint8_t payload_len = len+MQTT_HDR_LEN; 
+  uint8_t payload_len = len+MQTT_HDR_LEN+m_address_len; 
   
   //printf("Transmitting...\n") ;
   
@@ -419,9 +428,10 @@ void MqttSnRF24::writemqtt(uint8_t *address,
   // Switch to write mode
   send_mode() ;
 
-  send_buff[0] = payload_len ;
-  send_buff[1] = messageid ;
-  memcpy(send_buff+MQTT_HDR_LEN, buff, len) ;
+  memcpy(send_buff, m_address, m_address_len) ;
+  send_buff[0+m_address_len] = payload_len ;
+  send_buff[1+m_address_len] = messageid ;
+  memcpy(send_buff+MQTT_HDR_LEN+m_address_len, buff, len) ;
 
   try{
     // Write a blocking message
@@ -454,4 +464,41 @@ void MqttSnRF24::advertise(uint16_t duration)
   buff[1] = duration >> 8 ; // Is this MSB first or LSB first?
   buff[2] = duration & 0x00FF;
   writemqtt(m_broadcast, MQTT_ADVERTISE, buff, 3) ;
+}
+
+bool MqttSnRF24::connect(bool will, bool clean, uint16_t duration)
+{
+  uint8_t *addr = NULL ;
+  uint8_t address[MAX_RF24_ADDRESS_LEN] ;
+  uint8_t buff[MQTT_PAYLOAD_WIDTH-2] ;
+  buff[0] = (will?FLAG_WILL:0) | (clean?FLAG_CLEANSESSION:0) ;
+  buff[1] = MQTT_PROTOCOL ;
+  buff[2] = duration >> 8 ; // MSB set first
+  buff[3] = duration & 0x00FF ;
+
+  pthread_mutex_lock(&m_rwlock) ;
+  if (!(addr = get_gateway_address())){
+    pthread_mutex_unlock(&m_rwlock) ;
+    return false ;
+  }
+  // make a copy to avoid loss of pointer
+  memcpy(address, addr, m_address_len) ;
+  pthread_mutex_unlock(&m_rwlock) ;
+  
+  uint8_t len = strlen(m_szclient_id) ;
+  if (len > MAX_MQTT_CLIENTID) throw MqttOutOfRange("Client ID too long") ;
+  memcpy(buff+4, m_szclient_id, len) ;
+  writemqtt(address, MQTT_CONNECT, buff, 4+len) ;
+
+  return true ;
+}
+uint8_t *MqttSnRF24::get_gateway_address()
+{
+  for (unsigned int i=0; i < MAX_GATEWAYS;i++){
+    if (m_gwinfo[i].allocated && m_gwinfo[i].active){
+      // return the first known gateway
+      return m_gwinfo[i].address ;
+    }
+  }
+  return NULL ; // No gateways are known
 }
