@@ -74,7 +74,7 @@ MqttSnRF24::MqttSnRF24()
     m_address[i] = 0xC7 ;
   }
 
-  strcpy(m_szclient_id, "me") ;  
+  strcpy(m_szclient_id, "RF24") ;  
   m_gwid = 0 ;
   m_mqtt_type = client ;
   m_queue_head = 0 ;
@@ -143,7 +143,7 @@ bool MqttSnRF24::data_received_interrupt()
 	// Not expected message.
 	// This is not a 1.2 MQTT message
       }
-    }
+    }      
   }
   
   return true ;
@@ -199,7 +199,10 @@ void MqttSnRF24::received_gwinfo(uint8_t *sender_address, uint8_t *data, uint8_t
 	// Already have a record of this gateway.
 	// Update the details
 	m_gwinfo[i].address_length = m_address_len ;
-	memcpy(m_gwinfo[i].address, sender_address, m_address_len) ;
+	if (len == m_address_len+1) // Was the address populated in GWINFO?
+	  memcpy(m_gwinfo[i].address, data+1, m_address_len) ;
+	else // No address in GWINFO, assume sender is a gateway
+	  memcpy(m_gwinfo[i].address, sender_address, m_address_len) ;
 	gw_updated = true ;
 	break ;
       }
@@ -212,7 +215,10 @@ void MqttSnRF24::received_gwinfo(uint8_t *sender_address, uint8_t *data, uint8_t
 	  m_gwinfo[i].allocated = true ;
 	  m_gwinfo[i].active = true ;
 	  m_gwinfo[i].gw_id = data[0];
-	  memcpy(m_gwinfo[i].address, sender_address, m_address_len);
+	  if (len == m_address_len+1) // Was the address populated in GWINFO?
+	    memcpy(m_gwinfo[i].address, data+1, m_address_len) ;
+	  else // No address in GWINFO, assume sender is a gateway
+	    memcpy(m_gwinfo[i].address, sender_address, m_address_len) ;
 	  m_gwinfo[i].advertised(64800) ; // no idea if it's going to advertise
 	}
       }
@@ -365,7 +371,7 @@ void MqttSnRF24::queue_response(uint8_t *addr,
   // Regardless of what's in the queue, either overwrite
   // an old entry or set a new one. 
   m_queue[m_queue_head].set = true ;
-m_queue[m_queue_head].messageid = messageid ;
+  m_queue[m_queue_head].messageid = messageid ;
   memcpy(m_queue[m_queue_head].address, addr, m_address_len) ;
   memcpy(m_queue[m_queue_head].message_data, data, len) ;
   m_queue[m_queue_head].message_len = len ;
@@ -381,9 +387,9 @@ void MqttSnRF24::dispatch_queue()
     if (m_queue[queue_ptr].set){
 
       writemqtt(m_queue[queue_ptr].address,
-		  m_queue[queue_ptr].messageid,
-		  m_queue[queue_ptr].message_data,
-		  m_queue[queue_ptr].message_len) ;
+		m_queue[queue_ptr].messageid,
+		m_queue[queue_ptr].message_data,
+		m_queue[queue_ptr].message_len) ;
   
     }
     pthread_mutex_lock(&m_rwlock) ;
@@ -404,11 +410,11 @@ void MqttSnRF24::writemqtt(uint8_t *address,
   uint8_t l = m_address_len ;
   
   // includes the length field and message type
-  uint8_t payload_len = len+MQTT_HDR_LEN+m_address_len; 
+  uint8_t payload_len = len+MQTT_HDR_LEN; 
   
   //printf("Transmitting...\n") ;
   
-  if (payload_len > MQTT_PAYLOAD_WIDTH){
+  if ((payload_len+m_address_len) > MQTT_PAYLOAD_WIDTH){
     throw MqttOutOfRange("Payload too long") ;
   }
 
@@ -435,7 +441,7 @@ void MqttSnRF24::writemqtt(uint8_t *address,
 
   try{
     // Write a blocking message
-    write(send_buff, payload_len, true) ;
+    write(send_buff, payload_len+m_address_len, true) ;
   }
   catch(BuffIOErr &e){
     listen_mode() ;
