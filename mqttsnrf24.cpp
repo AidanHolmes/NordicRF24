@@ -33,6 +33,11 @@
 #define FLAG_DEFINED_TOPIC_ID _BV(0)
 #define FLAG_SHORT_TOPIC_NAME _BV(1)
 
+#define MQTT_RETURN_ACCEPTED 0x00
+#define MQTT_RETURN_CONGESTION 0x01
+#define MQTT_RETURN_INVALID_TOPIC 0x02
+#define MQTT_RETURN_NOT_SUPPORTED 0x03
+
 #define MQTT_ADVERTISE 0x00
 #define MQTT_GWINFO 0x02
 #define MQTT_CONNECT 0x04
@@ -78,6 +83,9 @@ MqttSnRF24::MqttSnRF24()
   m_gwid = 0 ;
   m_mqtt_type = client ;
   m_queue_head = 0 ;
+  m_max_retries = 3 ;
+  m_connect_timeout = 10 ; // sec
+  m_connection_head = NULL ;
 }
 
 MqttSnRF24::~MqttSnRF24()
@@ -121,6 +129,7 @@ bool MqttSnRF24::data_received_interrupt()
     // Read the MQTT-SN payload
     uint8_t length = packet[0+m_address_len] ;
     uint8_t messageid = packet[1+m_address_len] ;
+    uint8_t *mqtt_payload = packet+MQTT_HDR_LEN+m_address_len ;
     
     if (length >= MQTT_HDR_LEN && length <= MQTT_PAYLOAD_WIDTH){
       // Valid length field. This may not be a MQTT message
@@ -129,15 +138,33 @@ bool MqttSnRF24::data_received_interrupt()
       switch(messageid){
       case MQTT_ADVERTISE:
 	// Gateway message received
-	received_advertised(sender_addr, packet+MQTT_HDR_LEN+m_address_len, length) ;
+	received_advertised(sender_addr, mqtt_payload, length) ;
 	break;
       case MQTT_SEARCHGW:
 	// Message from client to gateway
-	received_searchgw(sender_addr, packet+MQTT_HDR_LEN+m_address_len, length) ;
+	received_searchgw(sender_addr, mqtt_payload, length) ;
 	break;
       case MQTT_GWINFO:
 	// Sent by gateways, although clients can also respond (not implemented)
-	received_gwinfo(sender_addr, packet+MQTT_HDR_LEN+m_address_len, length) ;
+	received_gwinfo(sender_addr, mqtt_payload, length) ;
+	break ;
+      case MQTT_CONNECT:
+	received_connect(sender_addr, mqtt_payload, length) ;
+	break ;
+      case MQTT_CONNACK:
+	received_connack(sender_addr, mqtt_payload, length) ;
+	break ;
+      case MQTT_WILLTOPICREQ:
+	received_willtopicreq(sender_addr, mqtt_payload, length) ;
+	break ;
+      case MQTT_WILLTOPIC:
+	received_willtopic(sender_addr, mqtt_payload, length) ;
+	break ;
+      case MQTT_WILLMSGREQ:
+	received_willmsgreq(sender_addr, mqtt_payload, length) ;
+	break;
+      case MQTT_WILLMSG:
+	received_willmsg(sender_addr, mqtt_payload, length) ;
 	break ;
 	//default:
 	// Not expected message.
@@ -228,6 +255,120 @@ void MqttSnRF24::received_gwinfo(uint8_t *sender_address, uint8_t *data, uint8_t
     // Why is the client requesting the info though??? Only needs one GW so not an error
   }
 }
+
+MqttConnection* MqttSnRF24::search_connection(char *szclientid)
+{
+  MqttConnection *p = NULL ;
+  for(p = m_connection_head; p != NULL; p=p->next){
+    if (p->enabled){
+      if (strcmp(p->szclientid, szclientid) == 0) break ;
+    }
+  }
+  return p ;
+}
+
+MqttConnection* MqttSnRF24::new_connection()
+{
+  MqttConnection *p = NULL, *prev = NULL ;
+  
+  for(p = m_connection_head; p != NULL; p=p->next){
+    if (!p->enabled){
+      // reuse this record
+      return p ;
+    }
+    prev = p ;
+  }
+  // p not found, create new connection at the end of the list
+  p = new MqttConnection() ;
+  p->prev = prev ; // could be null if the first record
+  // Set the head if first record
+  if (m_connection_head == NULL) m_connection_head = p ;
+
+  return p ;
+}
+
+void MqttSnRF24::delete_connection(char *szclientid)
+{
+  MqttConnection *p = NULL, *prev = NULL, *next = NULL ;
+
+  // Search for all client id instances and remove
+  while ((p = search_connection(szclientid))){
+    prev = p->prev ;
+    next = p->next ;
+    delete p ;
+    if (!prev) m_connection_head = NULL ; // this was the head
+    else prev->next = next ; // Connect the head and tail records
+  }
+}
+
+void MqttSnRF24::received_connect(uint8_t *sender_address, uint8_t *data, uint8_t len)
+{
+  char szClientID[MAX_MQTT_CLIENTID+1] ;
+  if (len < 5 || len > (4 + MAX_MQTT_CLIENTID)) return ; // invalid data length
+  
+  if (m_mqtt_type == gateway){
+    memcpy(szClientID, data+4, len - 4) ; // copy identifier
+    szClientID[len-4] = '\0' ; // Create null terminated string
+
+    printf("CONNECT: {flags = %02X, protocol = %02X, duration = %u, client ID = %s\n", data[0], data[1], (data[2] << 8) | data[3], szClientID) ;
+
+    if (data[1] != MQTT_PROTOCOL){
+      fprintf(stderr, "Invalid protocol ID in CONNECT from client %s\n", szClientID);
+      return ;
+    }
+
+    MqttConnection *con = search_connection(szClientID) ;
+    if (!con) con = new_connection() ;
+    if (!con){
+      fprintf(stderr, "Cannot create a new connection record for client %s\n", szClientID) ;
+      return ; // something went wrong with the allocation
+    }
+    
+    con->enabled = true ;
+    con->duration = (data[2] << 8) | data[3] ; // MSB assumed
+
+    // If WILL if flagged then set the flags for the message and topic
+    con->prompt_will_topic = con->prompt_will_message = ((FLAG_WILL & data[0]) > 0);
+
+    if (con->prompt_will_topic){
+      // Start with will topic request
+      queue_response(sender_address, MQTT_WILLTOPICREQ, NULL, 0) ;
+    }else{
+      // No need for WILL setup, just CONNACK
+      uint8_t buff[1] ;
+      buff[0] = MQTT_RETURN_ACCEPTED ;
+      queue_response(sender_address, MQTT_CONNACK, buff, 1) ;
+    }
+    
+  }
+  // Clients ignore this
+}
+
+void MqttSnRF24::received_connack(uint8_t *sender_address, uint8_t *data, uint8_t len)
+{
+
+}
+
+void MqttSnRF24::received_willtopicreq(uint8_t *sender_address, uint8_t *data, uint8_t len)
+{
+
+}
+
+void MqttSnRF24::received_willtopic(uint8_t *sender_address, uint8_t *data, uint8_t len)
+{
+
+}
+
+void MqttSnRF24::received_willmsgreq(uint8_t *sender_address, uint8_t *data, uint8_t len)
+{
+
+}
+
+void MqttSnRF24::received_willmsg(uint8_t *sender_address, uint8_t *data, uint8_t len)
+{
+
+}
+
 
 void MqttSnRF24::set_client_id(const char *szclientid)
 {
@@ -373,33 +514,51 @@ void MqttSnRF24::queue_response(uint8_t *addr,
   m_queue[m_queue_head].set = true ;
   m_queue[m_queue_head].messageid = messageid ;
   memcpy(m_queue[m_queue_head].address, addr, m_address_len) ;
-  memcpy(m_queue[m_queue_head].message_data, data, len) ;
+  if (len > 0 && data != NULL)
+    memcpy(m_queue[m_queue_head].message_data, data, len) ;
   m_queue[m_queue_head].message_len = len ;
 
   pthread_mutex_unlock(&m_rwlock) ;
 }
 
-void MqttSnRF24::dispatch_queue()
+bool MqttSnRF24::dispatch_queue()
 {
+  bool ret = true ;
   uint8_t queue_ptr = m_queue_head ;
-
+  bool failed = false ;
+  
   for ( ; ;){ // it's a do...while loop
+    failed = false ;
     if (m_queue[queue_ptr].set){
 
-      writemqtt(m_queue[queue_ptr].address,
-		m_queue[queue_ptr].messageid,
-		m_queue[queue_ptr].message_data,
-		m_queue[queue_ptr].message_len) ;
-  
+      for(uint16_t retry = 0;retry < m_max_retries+1;retry++){
+	try{
+	  writemqtt(m_queue[queue_ptr].address,
+		    m_queue[queue_ptr].messageid,
+		    m_queue[queue_ptr].message_data,
+		    m_queue[queue_ptr].message_len) ;
+	  break ;
+	}catch(BuffMaxRetry &e){
+	  // Do nothing, continue in for loop
+
+	  // continue to try other messages but this flag indicates
+	  // at least 1 message could not be sent
+	  if (retry == m_max_retries){
+	    failed = false ;
+	    ret = false ;
+	  }
+	}
+      }  
     }
     pthread_mutex_lock(&m_rwlock) ;
-    m_queue[queue_ptr].set = false ;
+    if (!failed) m_queue[queue_ptr].set = false ;
     queue_ptr++;
     if (queue_ptr >= MAX_QUEUE) queue_ptr = 0 ;
     pthread_mutex_unlock(&m_rwlock) ;
 
     if (queue_ptr == m_queue_head) break;
   }
+  return ret ;
 }
 
 void MqttSnRF24::writemqtt(uint8_t *address,
@@ -437,7 +596,8 @@ void MqttSnRF24::writemqtt(uint8_t *address,
   memcpy(send_buff, m_address, m_address_len) ;
   send_buff[0+m_address_len] = payload_len ;
   send_buff[1+m_address_len] = messageid ;
-  memcpy(send_buff+MQTT_HDR_LEN+m_address_len, buff, len) ;
+  if (buff != NULL && len > 0)
+    memcpy(send_buff+MQTT_HDR_LEN+m_address_len, buff, len) ;
 
   try{
     // Write a blocking message
@@ -445,31 +605,46 @@ void MqttSnRF24::writemqtt(uint8_t *address,
   }
   catch(BuffIOErr &e){
     listen_mode() ;
-    //throw MqttIOErr("write call failed") ;
-    throw ;
+    throw MqttIOErr(e.what());
   }
   catch(BuffMaxRetry &e){
-    //fprintf(stdout, "Failed to write MQTT data\n") ;
-    // ignore the exception
+    listen_mode() ;
+    throw ;
   }
 
   listen_mode() ;
 }
 
-void MqttSnRF24::searchgw(uint8_t radius)
+bool MqttSnRF24::searchgw(uint8_t radius)
 {
   uint8_t buff[1] ;
   buff[0] = radius ;
-  writemqtt(m_broadcast, MQTT_SEARCHGW, buff, 1) ;
+  for(uint16_t retry = 0;retry < m_max_retries+1;retry++){
+    try{
+      writemqtt(m_broadcast, MQTT_SEARCHGW, buff, 1) ;
+      return true ;
+    }catch(BuffMaxRetry &e){
+      // Do nothing, continue in for loop
+    }
+  }
+  return false ;
 }
 
-void MqttSnRF24::advertise(uint16_t duration)
+bool MqttSnRF24::advertise(uint16_t duration)
 {
   uint8_t buff[3] ;
   buff[0] = m_gwid ;
   buff[1] = duration >> 8 ; // Is this MSB first or LSB first?
   buff[2] = duration & 0x00FF;
-  writemqtt(m_broadcast, MQTT_ADVERTISE, buff, 3) ;
+  for(uint16_t retry = 0;retry < m_max_retries+1;retry++){
+    try{
+      writemqtt(m_broadcast, MQTT_ADVERTISE, buff, 3) ;
+      return true ;
+    }catch(BuffMaxRetry &e){
+      // Do nothing, continue in for loop
+    }
+  }
+  return false ;
 }
 
 bool MqttSnRF24::connect(bool will, bool clean, uint16_t duration)
@@ -493,11 +668,25 @@ bool MqttSnRF24::connect(bool will, bool clean, uint16_t duration)
   
   uint8_t len = strlen(m_szclient_id) ;
   if (len > MAX_MQTT_CLIENTID) throw MqttOutOfRange("Client ID too long") ;
-  memcpy(buff+4, m_szclient_id, len) ;
-  writemqtt(address, MQTT_CONNECT, buff, 4+len) ;
+  memcpy(buff+4, m_szclient_id, len) ; // do not copy /0 terminator
 
-  return true ;
+  for(uint16_t retry = 0;retry < m_max_retries+1;retry++){
+    try{
+      writemqtt(address, MQTT_CONNECT, buff, 4+len) ;
+      m_connect_start = time(NULL) ;
+      return true ;
+    }catch(BuffMaxRetry &e){
+      // Do nothing, continue in for loop
+    }
+  }
+  return false ;
 }
+
+bool MqttSnRF24::connect_expired()
+{
+  return (time(NULL) > (m_connect_start+m_connect_timeout)) ;
+}
+
 uint8_t *MqttSnRF24::get_gateway_address()
 {
   for (unsigned int i=0; i < MAX_GATEWAYS;i++){

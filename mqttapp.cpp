@@ -176,22 +176,29 @@ int main(int argc, char **argv)
   time_t last_advertised = 0, last_search = 0 ;
   const uint16_t advertise_interval = 25 ;
   const uint16_t search_interval = 5 ;
+  bool ret = false ;
   
   // Working loop
   for ( ; ; ){
     now = time(NULL) ;
     if (opt_gw){
       if (last_advertised+advertise_interval < now){
-	printf ("sending advertised\n") ;
-	mqtt.advertise(advertise_interval) ;
+	printf ("sending advertised - ") ;
+	ret = mqtt.advertise(advertise_interval) ;
+	printf ("%s\n", ret?"ok":"failed") ;
 	last_advertised = now ;
       }
       
     }else{
       if (last_search+search_interval < now){
-	printf ("sending searchgw\n") ;
-	mqtt.searchgw(1) ;
+	printf ("sending searchgw - ") ;
+	ret = mqtt.searchgw(1) ;
+	printf ("%s\n", ret?"ok":"failed") ;
 	last_search = now ;
+
+	if (mqtt.connect_expired())
+	  if (mqtt.connect(false, false, 32))
+	    printf("sending connect\n") ;
       }
     }
     mqtt.dispatch_queue() ;

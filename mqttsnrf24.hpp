@@ -61,7 +61,26 @@ public:
   uint8_t message_data[MQTT_PAYLOAD_WIDTH] ;
   uint8_t message_len ;
 };
-  
+
+class MqttConnection{
+public:
+  MqttConnection(){
+    next = NULL ;
+    prev = NULL ;
+    prompt_will_topic = false ;
+    prompt_will_message = false ;
+    duration = 0 ;
+    enabled = false ;
+  }
+  MqttConnection *next;
+  MqttConnection *prev ;
+  bool enabled ;
+  char szclientid[MAX_MQTT_CLIENTID+1] ;
+  uint8_t client_address[MAX_RF24_ADDRESS_LEN] ;
+  bool prompt_will_topic ;
+  bool prompt_will_message ;
+  uint16_t duration ;
+};
 
 class MqttGwInfo{
 public:
@@ -125,25 +144,41 @@ public:
   // MQTT messages
   
   // Send an advertise message to broadcast address
-  // duration, in sec, until next advertise is broadcast 
-  void advertise(uint16_t duration) ;
+  // duration, in sec, until next advertise is broadcast
+  // Returns false if connection couldn't be made due to timeout (only applies if using acks on pipes)
+  bool advertise(uint16_t duration) ;
 
   // Send a request for a gateway. Gateway responds with gwinfo data
-  void searchgw(uint8_t radius) ;
+  // Returns false if connection couldn't be made due to timeout (only applies if using acks on pipes)
+  bool searchgw(uint8_t radius) ;
 
+  // Throws MqttOutOfRange
+  // Returns false if connection couldn't be made due to timeout or
+  // no known gateway to connect to. Timeouts only detected if using ACKS on pipes
   bool connect(bool will, bool clean, uint16_t duration) ; 
+  bool connect_expired() ; // has the connect request expired? 
   
   // send all queued responses
-  void dispatch_queue();
+  // returns false if a message cannot be sent.
+  // Recommend retrying later if it fails (only applies if using acks on pipes)
+  bool dispatch_queue();
 
 protected:
   virtual bool data_received_interrupt() ;
   void received_advertised(uint8_t *sender_address, uint8_t *data, uint8_t len) ;
   void received_searchgw(uint8_t *sender_address, uint8_t *data, uint8_t len) ;
   void received_gwinfo(uint8_t *sender_address, uint8_t *data, uint8_t len) ;
-
+  void received_connect(uint8_t *sender_address, uint8_t *data, uint8_t len) ;
+  void received_connack(uint8_t *sender_address, uint8_t *data, uint8_t len) ;
+  void received_willtopicreq(uint8_t *sender_address, uint8_t *data, uint8_t len) ;
+  void received_willtopic(uint8_t *sender_address, uint8_t *data, uint8_t len) ;
+  void received_willmsgreq(uint8_t *sender_address, uint8_t *data, uint8_t len) ;
+  void received_willmsg(uint8_t *sender_address, uint8_t *data, uint8_t len) ;
   
   uint8_t *get_gateway_address();
+  MqttConnection* search_connection(char *szclientid);
+  MqttConnection* new_connection();
+  void delete_connection(char *szclientid);
   
   // Queue the data responses until dispatch is called.
   // Overwrites old queue messages without error if not dispacted quickly
@@ -154,6 +189,7 @@ protected:
 		      uint8_t len) ;
     
   // Creates header and body. Writes to address
+  // Throws BuffMaxRetry, MqttIOErr or MqttOutOfRange exceptions
   void writemqtt(uint8_t *address, uint8_t messageid, uint8_t *buff, uint8_t len);
   void listen_mode() ;
   void send_mode() ;
@@ -167,6 +203,13 @@ protected:
   MqttGwInfo m_gwinfo[MAX_GATEWAYS] ;
   MqttMessageQueue m_queue[MAX_QUEUE] ;
   uint8_t m_queue_head ;
+
+  uint16_t m_max_retries ;
+  // log when a connect started
+  time_t m_connect_start ;
+  uint16_t m_connect_timeout ;
+
+  MqttConnection *m_connection_head ;
 };
 
 
