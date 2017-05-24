@@ -326,7 +326,8 @@ void MqttSnRF24::received_connect(uint8_t *sender_address, uint8_t *data, uint8_
     
     con->enabled = true ;
     con->duration = (data[2] << 8) | data[3] ; // MSB assumed
-
+    memcpy(con->connect_address, sender_address, m_address_len) ;
+    
     // If WILL if flagged then set the flags for the message and topic
     con->prompt_will_topic = con->prompt_will_message = ((FLAG_WILL & data[0]) > 0);
 
@@ -346,7 +347,45 @@ void MqttSnRF24::received_connect(uint8_t *sender_address, uint8_t *data, uint8_
 
 void MqttSnRF24::received_connack(uint8_t *sender_address, uint8_t *data, uint8_t len)
 {
+  // This message isn't for gateways so just deal with the client case
+  if (m_mqtt_type == client){
+    // Was this client connecting?
+    if (!m_client_connection.enabled) return ; // not enabled and expected
 
+    // TO DO - confirm that the gateway sending this matches the address expected
+    // not a major fault but is worth a check
+
+    if (m_client_connection.prompt_will_topic || m_client_connection.prompt_will_message){
+      fprintf(stderr, "Connection complete, but will topic or message not prompted\n") ;
+    }
+
+    // TO DO: Needs to handle the errors properly and inform client of error
+    // so correct behaviour can follow.
+    switch(data[0]){
+    case MQTT_RETURN_ACCEPTED:
+      printf("CONNACK: {return code = Accepted}\n") ;
+      m_client_connection.connection_complete = true ;
+      break ;
+    case MQTT_RETURN_CONGESTION:
+      printf("CONNACK: {return code = Congestion}\n") ;
+      m_client_connection.enabled = false ; // Cannot connect
+      break ;
+    case MQTT_RETURN_INVALID_TOPIC:
+      printf("CONNACK: {return code = Invalid Topic}\n") ;
+      // Can this still count as a connection?
+      m_client_connection.enabled = false ; // don't allow?
+      break ;
+    case MQTT_RETURN_NOT_SUPPORTED:
+      printf("CONNACK: {return code = Not Supported}\n") ;
+      m_client_connection.enabled = false ; // Cannot connect
+      break ;
+    default:
+      printf("CONNACK: {return code = %u}\n", data[0]) ;
+      // ? Are we connected ?
+    }
+    
+    
+  }
 }
 
 void MqttSnRF24::received_willtopicreq(uint8_t *sender_address, uint8_t *data, uint8_t len)
@@ -649,8 +688,7 @@ bool MqttSnRF24::advertise(uint16_t duration)
 
 bool MqttSnRF24::connect(bool will, bool clean, uint16_t duration)
 {
-  uint8_t *addr = NULL ;
-  uint8_t address[MAX_RF24_ADDRESS_LEN] ;
+  MqttGwInfo *gw ;
   uint8_t buff[MQTT_PAYLOAD_WIDTH-2] ;
   buff[0] = (will?FLAG_WILL:0) | (clean?FLAG_CLEANSESSION:0) ;
   buff[1] = MQTT_PROTOCOL ;
@@ -658,12 +696,14 @@ bool MqttSnRF24::connect(bool will, bool clean, uint16_t duration)
   buff[3] = duration & 0x00FF ;
 
   pthread_mutex_lock(&m_rwlock) ;
-  if (!(addr = get_gateway_address())){
+  if (!(gw = get_available_gateway())){
     pthread_mutex_unlock(&m_rwlock) ;
     return false ;
   }
-  // make a copy to avoid loss of pointer
-  memcpy(address, addr, m_address_len) ;
+  // Copy connection details
+  m_client_connection.enabled = false ; // do not enable yet
+  m_client_connection.gwid = gw->gw_id ;
+  memcpy(m_client_connection.connect_address, gw->address, m_address_len) ;
   pthread_mutex_unlock(&m_rwlock) ;
   
   uint8_t len = strlen(m_szclient_id) ;
@@ -672,8 +712,14 @@ bool MqttSnRF24::connect(bool will, bool clean, uint16_t duration)
 
   for(uint16_t retry = 0;retry < m_max_retries+1;retry++){
     try{
-      writemqtt(address, MQTT_CONNECT, buff, 4+len) ;
+      writemqtt(m_client_connection.connect_address, MQTT_CONNECT, buff, 4+len) ;
+      // Record the start of the connection
       m_connect_start = time(NULL) ;
+      m_client_connection.enabled = true ; // Sent request, so enable
+      m_client_connection.prompt_will_topic = will ;
+      m_client_connection.prompt_will_message = will ;
+      m_client_connection.duration = duration ;
+
       return true ;
     }catch(BuffMaxRetry &e){
       // Do nothing, continue in for loop
@@ -685,6 +731,17 @@ bool MqttSnRF24::connect(bool will, bool clean, uint16_t duration)
 bool MqttSnRF24::connect_expired()
 {
   return (time(NULL) > (m_connect_start+m_connect_timeout)) ;
+}
+
+MqttGwInfo* MqttSnRF24::get_available_gateway()
+{
+  for (unsigned int i=0; i < MAX_GATEWAYS;i++){
+    if (m_gwinfo[i].allocated && m_gwinfo[i].active){
+      // return the first known gateway
+      return &(m_gwinfo[i]) ;
+    }
+  }
+  return NULL ;
 }
 
 uint8_t *MqttSnRF24::get_gateway_address()

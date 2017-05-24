@@ -70,16 +70,20 @@ public:
     prompt_will_topic = false ;
     prompt_will_message = false ;
     duration = 0 ;
+    gwid = 0 ;
     enabled = false ;
+    connection_complete = false ;
   }
-  MqttConnection *next;
-  MqttConnection *prev ;
-  bool enabled ;
-  char szclientid[MAX_MQTT_CLIENTID+1] ;
-  uint8_t client_address[MAX_RF24_ADDRESS_LEN] ;
-  bool prompt_will_topic ;
-  bool prompt_will_message ;
-  uint16_t duration ;
+  MqttConnection *next; // linked list of connections (gw only)
+  MqttConnection *prev ; // linked list of connections (gw only)
+  bool enabled ; // This record is valid
+  bool connection_complete ; // protocol complete
+  char szclientid[MAX_MQTT_CLIENTID+1] ; // client id for gw
+  uint8_t gwid ; // gw id for client connections
+  uint8_t connect_address[MAX_RF24_ADDRESS_LEN] ; // client or gw address
+  bool prompt_will_topic ; // waiting for will topic
+  bool prompt_will_message ; // waiting for will message
+  uint16_t duration ; // duration
 };
 
 class MqttGwInfo{
@@ -174,7 +178,8 @@ protected:
   void received_willtopic(uint8_t *sender_address, uint8_t *data, uint8_t len) ;
   void received_willmsgreq(uint8_t *sender_address, uint8_t *data, uint8_t len) ;
   void received_willmsg(uint8_t *sender_address, uint8_t *data, uint8_t len) ;
-  
+
+  MqttGwInfo* get_available_gateway();
   uint8_t *get_gateway_address();
   MqttConnection* search_connection(char *szclientid);
   MqttConnection* new_connection();
@@ -205,11 +210,13 @@ protected:
   uint8_t m_queue_head ;
 
   uint16_t m_max_retries ;
-  // log when a connect started
-  time_t m_connect_start ;
-  uint16_t m_connect_timeout ;
 
   MqttConnection *m_connection_head ;
+
+  // Connection attributes for a client
+  time_t m_connect_start ;
+  uint16_t m_connect_timeout ;
+  MqttConnection m_client_connection ;
 };
 
 
