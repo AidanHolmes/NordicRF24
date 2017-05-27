@@ -68,6 +68,14 @@
 
 #define MQTT_HDR_LEN 2
 
+#ifdef DEBUG
+#define DPRINT(x,...) fprintf(stdout,x,##__VA_ARGS__)
+#define EPRINT(x,...) fprintf(stderr,x,##__VA_ARGS__)
+#else
+#define DPRINT(x,...)
+#define EPRINT(x,...)
+#endif
+
 MqttSnRF24::MqttSnRF24()
 {
   m_address_len = MIN_RF24_ADDRESS_LEN ; // Min length
@@ -100,9 +108,11 @@ bool MqttSnRF24::data_received_interrupt()
 
   pthread_mutex_lock(&m_rwlock) ;
   uint8_t pipe = get_pipe_available();
-  pthread_mutex_unlock(&m_rwlock) ;
-
-  if (pipe == RF24_PIPE_EMPTY) return true ; // no pipe
+  
+  if (pipe == RF24_PIPE_EMPTY){
+    pthread_mutex_unlock(&m_rwlock) ;
+    return true ; // no pipe
+  }
 
   // Not using blocking reads for inbound data as everything
   // is a single packet message
@@ -111,8 +121,6 @@ bool MqttSnRF24::data_received_interrupt()
   // accessing data between interrupt thread and the data in the class
   
   for ( ; ; ){
-    // Ensure locking is kept short
-    pthread_mutex_lock(&m_rwlock) ;
     if (is_rx_empty()){
       pthread_mutex_unlock(&m_rwlock) ;
       break ;
@@ -179,13 +187,15 @@ bool MqttSnRF24::data_received_interrupt()
 void MqttSnRF24::received_advertised(uint8_t *sender_address, uint8_t *data, uint8_t len)
 {
   uint16_t duration = (data[1] << 8) | data[2] ; // Assuming MSB is first
-  printf("ADVERTISED: {gw = %u, duration = %u}\n", data[0], duration) ;
+  DPRINT("ADVERTISED: {gw = %u, duration = %u}\n", data[0], duration) ;
   
   if (m_mqtt_type == client){
     // Since RF24 doesn't actually let the receiver know who sent the
     // packet the gateway info cannot be complete. All that can be done is
     // to check if the gateway is already known and reactivate
     // Assumes address hasn't changed if it is active again.
+    pthread_mutex_lock(&m_rwlock) ;
+
     for (uint8_t i=0;i<MAX_GATEWAYS;i++){
       if (m_gwinfo[i].allocated &&
 	  m_gwinfo[i].gw_id == data[2] &&
@@ -195,6 +205,7 @@ void MqttSnRF24::received_advertised(uint8_t *sender_address, uint8_t *data, uin
 	break ;
       }
     }
+    pthread_mutex_unlock(&m_rwlock) ;
   }
 }
 
@@ -203,7 +214,7 @@ void MqttSnRF24::received_searchgw(uint8_t *sender_address, uint8_t *data, uint8
 {
   uint8_t buff[1] ;
 
-  printf("SEARCHGW: {radius = %u}\n", data[0]) ;
+  DPRINT("SEARCHGW: {radius = %u}\n", data[0]) ;
 
   if (m_mqtt_type == gateway){
     // Ignore radius value. This is a gw so respond with
@@ -214,12 +225,14 @@ void MqttSnRF24::received_searchgw(uint8_t *sender_address, uint8_t *data, uint8
 }
 void MqttSnRF24::received_gwinfo(uint8_t *sender_address, uint8_t *data, uint8_t len)
 {
-  printf("GWINFO: {gw = %u, address = ", data[0]) ;
-  for (uint8_t j=0; j < len - 1; j++) printf("%X", data[j+1]) ;
-  printf("}\n") ;
+  DPRINT("GWINFO: {gw = %u, address = ", data[0]) ;
+  for (uint8_t j=0; j < len - 1; j++) DPRINT("%X", data[j+1]) ;
+  DPRINT("}\n") ;
   
   bool gw_updated = false  ;
   if (m_mqtt_type == client){
+    pthread_mutex_lock(&m_rwlock) ;
+
     for (uint8_t i=0; i < MAX_GATEWAYS; i++){
       if (m_gwinfo[i].allocated &&
 	  m_gwinfo[i].gw_id == data[0]){
@@ -250,6 +263,8 @@ void MqttSnRF24::received_gwinfo(uint8_t *sender_address, uint8_t *data, uint8_t
 	}
       }
     }
+    pthread_mutex_unlock(&m_rwlock) ;
+
     // It's possible that the gateway cannot be saved if there's already a full list
     // of gateways.
     // Why is the client requesting the info though??? Only needs one GW so not an error
@@ -310,17 +325,20 @@ void MqttSnRF24::received_connect(uint8_t *sender_address, uint8_t *data, uint8_
     memcpy(szClientID, data+4, len - 4) ; // copy identifier
     szClientID[len-4] = '\0' ; // Create null terminated string
 
-    printf("CONNECT: {flags = %02X, protocol = %02X, duration = %u, client ID = %s\n", data[0], data[1], (data[2] << 8) | data[3], szClientID) ;
+    DPRINT("CONNECT: {flags = %02X, protocol = %02X, duration = %u, client ID = %s\n", data[0], data[1], (data[2] << 8) | data[3], szClientID) ;
 
     if (data[1] != MQTT_PROTOCOL){
-      fprintf(stderr, "Invalid protocol ID in CONNECT from client %s\n", szClientID);
+      EPRINT("Invalid protocol ID in CONNECT from client %s\n", szClientID);
       return ;
     }
+
+    pthread_mutex_lock(&m_rwlock) ;
 
     MqttConnection *con = search_connection(szClientID) ;
     if (!con) con = new_connection() ;
     if (!con){
-      fprintf(stderr, "Cannot create a new connection record for client %s\n", szClientID) ;
+      EPRINT("Cannot create a new connection record for client %s\n", szClientID) ;
+      pthread_mutex_unlock(&m_rwlock) ;
       return ; // something went wrong with the allocation
     }
     
@@ -330,6 +348,8 @@ void MqttSnRF24::received_connect(uint8_t *sender_address, uint8_t *data, uint8_
     
     // If WILL if flagged then set the flags for the message and topic
     con->prompt_will_topic = con->prompt_will_message = ((FLAG_WILL & data[0]) > 0);
+
+    pthread_mutex_unlock(&m_rwlock) ;
 
     if (con->prompt_will_topic){
       // Start with will topic request
@@ -349,6 +369,8 @@ void MqttSnRF24::received_connack(uint8_t *sender_address, uint8_t *data, uint8_
 {
   // This message isn't for gateways so just deal with the client case
   if (m_mqtt_type == client){
+    pthread_mutex_lock(&m_rwlock) ;
+
     // Was this client connecting?
     if (!m_client_connection.enabled) return ; // not enabled and expected
 
@@ -356,35 +378,36 @@ void MqttSnRF24::received_connack(uint8_t *sender_address, uint8_t *data, uint8_
     // not a major fault but is worth a check
 
     if (m_client_connection.prompt_will_topic || m_client_connection.prompt_will_message){
-      fprintf(stderr, "Connection complete, but will topic or message not prompted\n") ;
+      EPRINT("Connection complete, but will topic or message not prompted\n") ;
     }
 
     // TO DO: Needs to handle the errors properly and inform client of error
     // so correct behaviour can follow.
     switch(data[0]){
     case MQTT_RETURN_ACCEPTED:
-      printf("CONNACK: {return code = Accepted}\n") ;
+      DPRINT("CONNACK: {return code = Accepted}\n") ;
       m_client_connection.connection_complete = true ;
       break ;
     case MQTT_RETURN_CONGESTION:
-      printf("CONNACK: {return code = Congestion}\n") ;
+      DPRINT("CONNACK: {return code = Congestion}\n") ;
       m_client_connection.enabled = false ; // Cannot connect
       break ;
     case MQTT_RETURN_INVALID_TOPIC:
-      printf("CONNACK: {return code = Invalid Topic}\n") ;
+      DPRINT("CONNACK: {return code = Invalid Topic}\n") ;
       // Can this still count as a connection?
       m_client_connection.enabled = false ; // don't allow?
       break ;
     case MQTT_RETURN_NOT_SUPPORTED:
-      printf("CONNACK: {return code = Not Supported}\n") ;
+      DPRINT("CONNACK: {return code = Not Supported}\n") ;
       m_client_connection.enabled = false ; // Cannot connect
       break ;
     default:
-      printf("CONNACK: {return code = %u}\n", data[0]) ;
+      DPRINT("CONNACK: {return code = %u}\n", data[0]) ;
       // ? Are we connected ?
     }
     
-    
+    pthread_mutex_unlock(&m_rwlock) ;
+
   }
 }
 
@@ -448,26 +471,14 @@ void MqttSnRF24::initialise(enType type, uint8_t address_len, uint8_t *broadcast
   set_payload_width(0,MQTT_PAYLOAD_WIDTH) ;
   set_payload_width(1,MQTT_PAYLOAD_WIDTH) ;
 
-  uint8_t l = m_address_len ;
-  if (!set_rx_address(0, m_broadcast, &l)){
-    pthread_mutex_unlock(&m_rwlock) ;
+  if (!set_rx_address(0, m_broadcast, m_address_len)){
     throw MqttIOErr("Cannot set RX address") ;
   }
 
-  l = m_address_len ;
-  if (!set_rx_address(1, m_address, &l)){
-    pthread_mutex_unlock(&m_rwlock) ;
+  if (!set_rx_address(1, m_address, m_address_len)){
     throw MqttIOErr("Cannot set RX address") ;
   }
 
-  /*
-  l = m_address_len ;
-  if (!set_tx_address(m_broadcast, &l)){
-    pthread_mutex_unlock(&m_rwlock) ;
-    throw MqttIOErr("Cannot set TX address") ;
-  }
-  */
-  
   power_up(true) ;
   nano_sleep(0,150000) ; // 150 micro second wait
 
@@ -509,9 +520,8 @@ void MqttSnRF24::send_mode()
 void MqttSnRF24::listen_mode()
 {
   if (!m_pGPIO) throw MqttIOErr("GPIO not set") ;
-  uint8_t l = m_address_len ;
 
-  //printf("Listening...\n") ;
+  //DPRINT("Listening...\n") ;
   pthread_mutex_lock(&m_rwlock) ;
   if (!m_pGPIO->output(m_ce, IHardwareGPIO::low)){
     pthread_mutex_unlock(&m_rwlock) ;
@@ -519,7 +529,7 @@ void MqttSnRF24::listen_mode()
   }
 
   // Set pipe 0 to listen on the broadcast address
-  if (!set_rx_address(0, m_broadcast, &l)){
+  if (!set_rx_address(0, m_broadcast, m_address_len)){
     pthread_mutex_unlock(&m_rwlock) ;
     throw MqttIOErr("Cannot set RX address") ;
   }
@@ -605,32 +615,31 @@ void MqttSnRF24::writemqtt(uint8_t *address,
 			   uint8_t *buff, uint8_t len)
 {
   uint8_t send_buff[MQTT_PAYLOAD_WIDTH] ;
-  uint8_t l = m_address_len ;
   
   // includes the length field and message type
   uint8_t payload_len = len+MQTT_HDR_LEN; 
   
-  //printf("Transmitting...\n") ;
-  
+  //DPRINT("Transmitting...\n") ;
+
   if ((payload_len+m_address_len) > MQTT_PAYLOAD_WIDTH){
     throw MqttOutOfRange("Payload too long") ;
   }
 
+  // Switch to write mode
+  send_mode() ;
+
   pthread_mutex_lock(&m_rwlock) ;
-  
-  if (!set_tx_address(address, &l)){
+
+  if (!set_tx_address(address, m_address_len)){
     pthread_mutex_unlock(&m_rwlock) ;
     throw MqttIOErr("Cannot set TX address") ;
   }
-  l = m_address_len ;
-  if (!set_rx_address(0, address, &l)){
+
+  if (!set_rx_address(0, address, m_address_len)){
     pthread_mutex_unlock(&m_rwlock) ;
     throw MqttIOErr("Cannot set RX address") ;
   }
   pthread_mutex_unlock(&m_rwlock) ;
-
-  // Switch to write mode
-  send_mode() ;
 
   memcpy(send_buff, m_address, m_address_len) ;
   send_buff[0+m_address_len] = payload_len ;

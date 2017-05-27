@@ -137,7 +137,7 @@ bool PingRF24::initialise(uint8_t channel)
 bool PingRF24::listen(uint8_t *address)
 {
   uint8_t addr_width = ADDR_WIDTH ;
-  if (!set_rx_address(1, address, &addr_width)) return false ;
+  if (!set_rx_address(1, address, addr_width)) return false ;
 
   receiver(true) ;
   power_up(true) ;
@@ -171,8 +171,8 @@ uint16_t PingRF24::ping(uint8_t *address, uint16_t count)
   if (!address){ return 0 ;}
   
   // Set addresses for new ping
-  if (!set_tx_address(address, &tx_addr_width)){printf("failed to set tx address\n"); return 0 ;}
-  if (!set_rx_address(0, address, &rx_addr_width)){printf("failed to set tx address\n"); return 0 ;}
+  if (!set_tx_address(address, tx_addr_width)){printf("failed to set tx address\n"); return 0 ;}
+  if (!set_rx_address(0, address, rx_addr_width)){printf("failed to set tx address\n"); return 0 ;}
 
   m_failed = 0;
   m_succeeded = 0;

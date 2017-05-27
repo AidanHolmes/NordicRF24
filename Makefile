@@ -1,9 +1,10 @@
+DEBUG=-DDEBUG
 HWLIBS = ../hardware
 CXX = g++
 CC = g++
-CXXFLAGS= -Wall -I$(HWLIBS) -L$(HWLIBS) -g
+CXXFLAGS= -Wall -I$(HWLIBS) -L$(HWLIBS) $(DEBUG) -g
 CFLAGS = $(CXXFLAGS)
-LIBS = -lwiringPi -lpihw
+LIBS = -lwiringPi -lpihw -lpthread
 LDFLAGS = -I$(HWLIBS) -L$(HWLIBS)
 
 SRCS_MQTT = mqttapp.cpp mqttsnrf24.cpp bufferedrf24.cpp rpinrf24.cpp

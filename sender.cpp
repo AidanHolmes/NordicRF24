@@ -151,7 +151,6 @@ int main(int argc, char **argv)
   
   // Transmit and receive address must match receiver address to receive ACKs
   uint8_t def_address[ADDR_WIDTH] = {0xC2,0xC2,0xC2,0xC2,0xC2} ;
-  uint8_t addr_len = ADDR_WIDTH ;
   uint16_t bytesread = 0 ;
   
   radio.auto_update(true);
@@ -183,7 +182,7 @@ int main(int argc, char **argv)
   if (opt_listen){ // Listen for messages
     if (!opt_addr_set) memcpy(rf24address, def_address, ADDR_WIDTH) ;
     // Set pipe 1 with the receiving address
-    if (!radio.set_rx_address(0, rf24address, &addr_len)) return EXIT_FAILURE;
+    if (!radio.set_rx_address(0, rf24address, addr_width)) return EXIT_FAILURE;
     print_state(&radio) ; // print the radio config before receiving data
 
     // Start listening
@@ -210,8 +209,8 @@ int main(int argc, char **argv)
     // Use the default address if one isn't specified on the command line
     if (!opt_addr_set) memcpy(rf24address, def_address, ADDR_WIDTH) ;
     // RX and TX addresses have to match for the sender.
-    if (!radio.set_tx_address(rf24address, &addr_width)){printf("failed to set tx address\n"); return EXIT_FAILURE ;}
-    if (!radio.set_rx_address(0, rf24address, &addr_width)){printf("failed to set tx address\n"); return EXIT_FAILURE ;}
+    if (!radio.set_tx_address(rf24address, addr_width)){printf("failed to set tx address\n"); return EXIT_FAILURE ;}
+    if (!radio.set_rx_address(0, rf24address, addr_width)){printf("failed to set tx address\n"); return EXIT_FAILURE ;}
 
     try{
       radio.write((uint8_t*)szMessage, strlen(szMessage), opt_block) ;

@@ -59,6 +59,13 @@
 #define REG_DYNPD 0x1C
 #define REG_FEATURE 0x1D
 
+#ifdef DEBUG
+#define DPRINT(x,...) fprintf(stdout,x,##__VA_ARGS__)
+#define EPRINT(x,...) fprintf(stderr,x,##__VA_ARGS__)
+#else
+#define DPRINT(x,...)
+#define EPRINT(x,...)
+#endif
 
 void NordicRF24::interrupt()
 {
@@ -68,11 +75,11 @@ void NordicRF24::interrupt()
   for (std::vector<NordicRF24*>::iterator i = radio_instances.begin(); i != radio_instances.end(); i++){
     ret = (*i)->read_status() ;
     if (!ret){
-      printf("Failed to read status in interrupt handler\n") ;
+      DPRINT("Failed to read status in interrupt handler\n") ;
       continue ; // Cannot handle interrupt if call failed
     }
     /*
-    printf("STATUS:\t\tReceived=%s, Transmitted=%s, Max Retry=%s, RX Pipe Ready=%d, Transmit Full=%s\n",
+    DPRINT("STATUS:\t\tReceived=%s, Transmitted=%s, Max Retry=%s, RX Pipe Ready=%d, Transmit Full=%s\n",
 	   (*i)->has_received_data()?"YES":"NO",
 	   (*i)->has_data_sent()?"YES":"NO",
 	   (*i)->is_at_max_retry_limit()?"YES":"NO",
@@ -96,7 +103,7 @@ void NordicRF24::interrupt()
     if (!(*i)->has_received_data() &&
 	!(*i)->has_data_sent() &&
 	!(*i)->is_at_max_retry_limit()){
-      fprintf(stdout, "Other IRQ interrupt\n") ;
+      DPRINT("Other IRQ interrupt\n") ;
     }
     */
     if (ret){
@@ -107,7 +114,7 @@ void NordicRF24::interrupt()
       handled++ ;
     }
   }
-  //fprintf(stdout, "Interrupt handled %d times\n", handled) ;
+  //DPRINT("Interrupt handled %d times\n", handled) ;
   // Only flush once using the first instance in the registered list
   // of instances
   //(*radio_instances.begin())->flushtx() ;
@@ -118,13 +125,13 @@ void NordicRF24::interrupt()
 }
 bool NordicRF24::max_retry_interrupt()
 {
-  fprintf(stdout,"Max retries reached\n") ;
+  DPRINT("Max retries reached\n") ;
   return true ;
 }
 
 bool NordicRF24::data_sent_interrupt()
 {
-  fprintf(stdout, "ACK received\n") ;
+  DPRINT("ACK received\n") ;
   return true ;
 }
 
@@ -135,20 +142,22 @@ bool NordicRF24::data_received_interrupt()
   uint8_t size = get_rx_data_size(get_pipe_available()) ;
   read_payload(buffer, size) ;
   buffer[size+1] = '\0' ;
-  fprintf(stdout, "Pipe %d: %s hex{", get_pipe_available(), buffer) ;
+  DPRINT("Pipe %d: %s hex{", get_pipe_available(), buffer) ;
   for (uint8_t i=0; i<size;i++){
-    fprintf(stdout, " %X ", buffer[i]) ;
+    DPRINT(" %X ", buffer[i]) ;
   }
-  fprintf(stdout, "}\n") ;
+  DPRINT("}\n") ;
 
   return true;
 }
 
 NordicRF24::NordicRF24()
 {
-  if (pthread_mutex_init(&m_rwlock, NULL) != 0){
+  pthread_mutexattr_t attr ;
+  pthread_mutexattr_init(&attr);
+  pthread_mutexattr_settype(&attr, PTHREAD_MUTEX_ERRORCHECK) ;
+  if (pthread_mutex_init(&m_rwlock, &attr) != 0){
     throw RF24Exception("Mutex creation failed") ;
-    fprintf(stderr, "ASSERT ERROR: Failed to create mutex\n") ;
   }
 
   m_pSPI = NULL ;
@@ -287,19 +296,19 @@ bool NordicRF24::set_gpio(IHardwareGPIO *pGPIO, uint8_t ce, uint8_t irq)
   m_ce = ce ;
 
   if (!pGPIO->setup(m_ce, IHardwareGPIO::gpio_output)){
-    fprintf(stderr, "Cannot set GPIO output pin for CE\n") ;
+    EPRINT("Cannot set GPIO output pin for CE\n") ;
     return false ;
   }
   pGPIO->output(m_ce, IHardwareGPIO::low) ;
 
   if (m_irq > 0){
     if (!pGPIO->setup(m_irq, IHardwareGPIO::gpio_input)){
-      fprintf(stderr, "Cannot set GPIO input pin for IRQ\n") ;
+      EPRINT("Cannot set GPIO input pin for IRQ\n") ;
       return false ;
     }
     
     if (!pGPIO->register_interrupt(m_irq, IHardwareGPIO::falling, interrupt)){
-      fprintf(stderr, "Cannot set GPIO interrupt pin for IRQ\n") ;
+      EPRINT("Cannot set GPIO interrupt pin for IRQ\n") ;
       return false ;
     }
   }
@@ -317,10 +326,19 @@ uint8_t NordicRF24::write_packet(uint8_t *packet)
 {
   uint8_t packet_size = get_transmit_width() ;
   if (!packet) return packet_size ;
-  if (!write_payload(packet, packet_size)) return 0 ;
-  if (!m_pGPIO->output(m_ce, IHardwareGPIO::high)) return 0 ;
+  if (!write_payload(packet, packet_size)){
+    EPRINT("write_payload failed\n");
+    return 0 ;
+  }
+  if (!m_pGPIO->output(m_ce, IHardwareGPIO::high)){
+    EPRINT("ce failed to be set high\n") ;
+    return 0 ;
+  }
   nano_sleep(0,10000) ; // 10 micro seconds
-  if (!m_pGPIO->output(m_ce, IHardwareGPIO::low)) return 0 ;
+  if (!m_pGPIO->output(m_ce, IHardwareGPIO::low)){
+    EPRINT("ce failed to be set low\n") ;
+    return 0 ;
+  }
   return packet_size ;
 }
 
@@ -348,15 +366,31 @@ uint8_t NordicRF24::get_rx_data_size(uint8_t pipe)
 
 bool NordicRF24::read_payload(uint8_t *buffer, uint8_t len)
 {
-  if (!m_pSPI) return false ; // No SPI interface
+  if (!m_pSPI){
+    EPRINT("read_payload - no spi set\n") ;
+    return false ; // No SPI interface
+  }
   // Check if receiving or transmitting.
-  if (!m_prim_rx) return false ;
+  // TO DO - ACKs with payloads will need reading in TX mode
+  //if (!m_prim_rx){
+  //  EPRINT("read_payload - radio is not a receiver\n") ;
+  //  return false ;
+  //}
 
-  if (buffer == NULL || len > 32) return false ;
-
+  if (buffer == NULL || len > 32){
+    EPRINT("read_payload - len too long %u\n", len) ;
+    return false ;
+  }
+  
   *m_txbuf = R_RX_PAYLOAD ;
-  if (!m_pSPI->write(m_txbuf, len+1)) return false ;
-  if (!m_pSPI->read(m_rxbuf, len+1)) return false ;
+  if (!m_pSPI->write(m_txbuf, len+1)){
+    EPRINT("read_payload - spi write failed\n") ;
+    return false ;
+  }
+  if (!m_pSPI->read(m_rxbuf, len+1)){
+    EPRINT("read_payload - spi read failed\n") ;
+    return false ;
+  }
   convert_status(*m_rxbuf) ;
   memcpy(buffer, m_rxbuf+1, len) ;
   return true ;
@@ -364,16 +398,31 @@ bool NordicRF24::read_payload(uint8_t *buffer, uint8_t len)
 
 bool NordicRF24::write_payload(uint8_t *buffer, uint8_t len)
 {
-  if (!m_pSPI) return false ; // No SPI interface
+  if (!m_pSPI){
+    EPRINT("write_payload - no spi set\n") ;
+    return false ; // No SPI interface
+  }
   // Check if receiving or transmitting.
-  if (m_prim_rx) return false ;
+  if (m_prim_rx){
+    EPRINT("write_payload failed - set as receiver\n") ;
+    return false ;
+  }
 
-  if (buffer == NULL || len > 32) return false ;
+  if (buffer == NULL || len > 32){
+    EPRINT("write_payload - no buffer or len out of bounds\n") ;
+    return false ;
+  }
 
   *m_txbuf = W_TX_PAYLOAD ;
   memcpy(m_txbuf+1, buffer, len) ;
-  if (!m_pSPI->write(m_txbuf, len+1)) return false ;
-  if (!m_pSPI->read(m_rxbuf, len+1)) return false ;
+  if (!m_pSPI->write(m_txbuf, len+1)){
+    EPRINT("write_payload - spi write failed\n") ;
+    return false ;
+  }
+  if (!m_pSPI->read(m_rxbuf, len+1)){
+    EPRINT("write_payload - spi read failed\n") ;
+    return false ;
+  }
   convert_status(*m_rxbuf) ;
   return true ;  
 }
@@ -385,8 +434,14 @@ bool NordicRF24::read_register(uint8_t addr, uint8_t *val, uint8_t len)
 
   addr &= addmask ;
   *m_txbuf = addr ;
-  if (!m_pSPI->write(m_txbuf, len+1)) {return false ;}
-  if (!m_pSPI->read(m_rxbuf, len+1)) {return false ;}
+  if (!m_pSPI->write(m_txbuf, len+1)) {
+    EPRINT("read_register - spi write failed\n") ;
+    return false ;
+  }
+  if (!m_pSPI->read(m_rxbuf, len+1)) {
+    EPRINT("read_register - spi read failed\n") ;
+    return false ;
+  }
   memcpy(val, m_rxbuf+1, len) ;
   convert_status(*m_rxbuf) ;
 
@@ -400,11 +455,20 @@ bool NordicRF24::write_register(uint8_t addr, uint8_t *val, uint8_t len)
 
   addr &= addmask ;
   *m_txbuf = addr | RF24_WRITE_REG;
-  if (len >= MAX_RXTXBUF) return false ; // too much data
+  if (len >= MAX_RXTXBUF){
+    EPRINT("write_register - len too large at %u\n", len);
+    return false ; // too much data
+  }
   
   memcpy(m_txbuf+1, val, len);
-  if (!m_pSPI->write(m_txbuf, len+1))return false ;
-  if (!m_pSPI->read(m_rxbuf, len+1)) return false ;
+  if (!m_pSPI->write(m_txbuf, len+1)){
+    EPRINT("write_register - spi write failed\n") ;
+    return false ;
+  }
+  if (!m_pSPI->read(m_rxbuf, len+1)){
+    EPRINT("read_register - spi read failed\n") ;
+    return false ;
+  }
   convert_status(*m_rxbuf) ;
   return true ;
 }
@@ -641,18 +705,23 @@ bool NordicRF24::carrier_detect(bool &cd)
   return true ;
 }
 
-bool NordicRF24::set_rx_address(uint8_t pipe, uint8_t *address, uint8_t *len)
+bool NordicRF24::set_rx_address(uint8_t pipe, uint8_t *address, uint8_t len)
 {
   if (pipe >= RF24_PIPES) return false ; // out of range
 
   if (pipe <= 1){
     uint8_t address_width = get_address_width() ;
-    if (address_width == 0 || address_width > *len) return false ;
-    *len = address_width ;
+    if (len != address_width){
+      EPRINT("set_rx_address width invalid: %u\n", len) ;
+      return false ;
+    }
     return write_register(REG_RX_ADDR_BASE+pipe, address, address_width) ;
   }
-  if (*len < 1) return false ;
-  *len = 1 ;
+  if (len < 1){
+    EPRINT("set_rx_address pipe %u invalid len %u", pipe, len) ;
+    return false ;
+  }
+
   return write_register(REG_RX_ADDR_BASE+pipe, address, 1) ;
 }
 
@@ -683,12 +752,14 @@ bool NordicRF24::get_rx_address(uint8_t pipe, uint8_t *address, uint8_t *len)
   return read_register(REG_RX_ADDR_BASE+pipe, address, address_width);
 }
 
-bool NordicRF24::set_tx_address(uint8_t *address, uint8_t *len)
+bool NordicRF24::set_tx_address(uint8_t *address, uint8_t len)
 {
   uint8_t address_width = get_address_width();
-  if (address_width == 0 || address_width > *len) return false ;
+  if (address_width != len){
+    EPRINT("set_tx_address invalid len %u - address_width %u\n", len, address_width) ;
+    return false ;
+  }
 
-  *len = address_width ;
   return write_register(REG_TX_ADDR, address, address_width) ;
 }
 

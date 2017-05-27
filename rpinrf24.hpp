@@ -185,16 +185,17 @@ public:
 
   // RX Address registers
   // pipe & address is read-only, len is read/write
-  bool set_rx_address(uint8_t pipe, uint8_t *address, uint8_t *len);
+  // Fails if len is too short or IO error
+  bool set_rx_address(uint8_t pipe, uint8_t *address, uint8_t len);
+
   // pipe is read-only, address and len are read/write. If address is NULL
   // then only len is updated to address width
   bool get_rx_address(uint8_t pipe, uint8_t *address, uint8_t *len);
 
   // TX Address register
   // Sets transmit address.
-  // If address to longer than the width then only width number
-  // of bytes are set and len is updated to show actual length set.
-  bool set_tx_address(uint8_t *address, uint8_t *len) ;
+  // Fails if len is too short or IO error
+  bool set_tx_address(uint8_t *address, uint8_t len) ;
   
   // Gets the transmit address. Len must reflect the length of the address buffer and be long enough
   // to write the address buffer, else false is returned.

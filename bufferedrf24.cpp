@@ -3,6 +3,14 @@
 #include <string.h>
 #include <stdio.h>
 
+#ifdef DEBUG
+#define DPRINT(x,...) fprintf(stdout,x,##__VA_ARGS__)
+#define EPRINT(x,...) fprintf(stderr,x,##__VA_ARGS__)
+#else
+#define DPRINT(x,...)
+#define EPRINT(x,...)
+#endif
+
 BufferedRF24::BufferedRF24()
 {
   for (int i = 0; i < RF24_PIPES; i++){

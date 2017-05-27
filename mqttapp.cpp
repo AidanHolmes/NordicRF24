@@ -174,8 +174,8 @@ int main(int argc, char **argv)
   
   time_t now = time(NULL) ;
   time_t last_advertised = 0, last_search = 0 ;
-  const uint16_t advertise_interval = 25 ;
-  const uint16_t search_interval = 5 ;
+  const uint16_t advertise_interval = 15 ;
+  const uint16_t search_interval = 1 ;
   bool ret = false ;
   
   // Working loop
