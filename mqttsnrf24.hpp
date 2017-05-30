@@ -24,6 +24,10 @@
 #define MAX_MQTT_CLIENTID 21
 #define MQTT_PAYLOAD_WIDTH 32
 #define MQTT_PROTOCOL 0x01
+#define MQTT_TOPIC_SAFE_BYTES 24
+#define MQTT_TOPIC_MAX_BYTES 26
+#define MQTT_MESSAGE_SAFE_BYTES 25
+#define MQTT_MESSAGE_MAX_BYTES 27
 
 class MqttException : public RF24Exception{
 public:
@@ -159,13 +163,23 @@ public:
   // Throws MqttOutOfRange
   // Returns false if connection couldn't be made due to timeout or
   // no known gateway to connect to. Timeouts only detected if using ACKS on pipes
-  bool connect(bool will, bool clean, uint16_t duration) ; 
-  bool connect_expired() ; // has the connect request expired? 
+  bool connect(uint8_t gwid, bool will, bool clean, uint16_t duration) ; 
+  bool connect_expired() ; // has the connect request expired?
+  void set_willtopic(const wchar_t *topic, uint8_t qos) ;
+  void set_willmessage(const wchar_t *message) ;
   
   // send all queued responses
   // returns false if a message cannot be sent.
   // Recommend retrying later if it fails (only applies if using acks on pipes)
   bool dispatch_queue();
+
+  // Returns true if known gateway exists. Sets gwid to known gateway handle
+  // returns false if no known gateways exist
+  bool get_known_gateway(uint8_t *gwid) ;
+
+  // Check gateway handle. If gateway has been lost then this will return false,
+  // otherwise it will be true
+  bool is_gateway_valid(uint8_t gwid);
 
 protected:
   virtual bool data_received_interrupt() ;
@@ -179,9 +193,11 @@ protected:
   void received_willmsgreq(uint8_t *sender_address, uint8_t *data, uint8_t len) ;
   void received_willmsg(uint8_t *sender_address, uint8_t *data, uint8_t len) ;
 
+  MqttGwInfo* get_gateway(uint8_t gwid);
   MqttGwInfo* get_available_gateway();
   uint8_t *get_gateway_address();
   MqttConnection* search_connection(char *szclientid);
+  MqttConnection* search_connection_address(uint8_t *clientaddr);
   MqttConnection* new_connection();
   void delete_connection(char *szclientid);
   
@@ -217,6 +233,11 @@ protected:
   time_t m_connect_start ;
   uint16_t m_connect_timeout ;
   MqttConnection m_client_connection ;
+  char m_willtopic[MQTT_TOPIC_MAX_BYTES+1] ;
+  char m_willmessage[MQTT_MESSAGE_MAX_BYTES+1] ;
+  size_t m_willtopicsize ;
+  size_t m_willmessagesize ;
+  uint8_t m_willtopicqos ;
 };
 
 

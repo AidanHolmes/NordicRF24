@@ -175,8 +175,10 @@ int main(int argc, char **argv)
   time_t now = time(NULL) ;
   time_t last_advertised = 0, last_search = 0 ;
   const uint16_t advertise_interval = 15 ;
-  const uint16_t search_interval = 1 ;
+  const uint16_t search_interval = 5 ;
   bool ret = false ;
+  bool gateway_known = false ;
+  uint8_t gwhandle =0;
   
   // Working loop
   for ( ; ; ){
@@ -190,15 +192,27 @@ int main(int argc, char **argv)
       }
       
     }else{
-      if (last_search+search_interval < now){
-	printf ("sending searchgw - ") ;
-	ret = mqtt.searchgw(1) ;
-	printf ("%s\n", ret?"ok":"failed") ;
-	last_search = now ;
-
-	if (mqtt.connect_expired())
-	  if (mqtt.connect(false, false, 32))
-	    printf("sending connect\n") ;
+      if (!gateway_known){
+	// Send a search request
+	if (last_search+search_interval < now){
+	  printf ("sending searchgw - ") ;
+	  ret = mqtt.searchgw(1) ;
+	  printf ("%s\n", ret?"ok":"failed") ;
+	  last_search = now ;
+	}
+	// Check for responses
+	gateway_known = mqtt.get_known_gateway(&gwhandle) ;
+      }else{
+	// Known gateway
+	if (mqtt.is_gateway_valid(gwhandle)){
+	  if (mqtt.connect_expired()){
+	    mqtt.set_willtopic(L"a/b/c/d", 0) ;
+  	    mqtt.set_willmessage(L"Hello World") ;
+	    
+	    if (mqtt.connect(gwhandle, true, true, 32))
+	      printf("sending connect\n") ;
+	  }
+	}
       }
     }
     mqtt.dispatch_queue() ;

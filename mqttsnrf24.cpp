@@ -16,6 +16,8 @@
 #include "radioutil.h"
 #include <string.h>
 #include <stdio.h>
+#include <wchar.h>
+#include <stdlib.h>
 
 #ifndef _BV
 #define _BV(x) 1 << x
@@ -92,8 +94,14 @@ MqttSnRF24::MqttSnRF24()
   m_mqtt_type = client ;
   m_queue_head = 0 ;
   m_max_retries = 3 ;
-  m_connect_timeout = 10 ; // sec
+  m_connect_timeout = 20 ; // sec
   m_connection_head = NULL ;
+
+  m_willmessage[0] = '\0' ;
+  m_willmessagesize = 0 ;
+  m_willtopic[0] = '\0' ;
+  m_willtopicsize = 0 ;
+  m_willtopicqos = 0;
 }
 
 MqttSnRF24::~MqttSnRF24()
@@ -282,6 +290,21 @@ MqttConnection* MqttSnRF24::search_connection(char *szclientid)
   return p ;
 }
 
+MqttConnection* MqttSnRF24::search_connection_address(uint8_t *clientaddr)
+{
+  MqttConnection *p = NULL ;
+  uint8_t a = 0;
+  for(p = m_connection_head; p != NULL; p=p->next){
+    if (p->enabled){
+      for (a=0; a < m_address_len; a++){
+	if(p->connect_address[a] != clientaddr[a]) break ;
+      }
+      if (a == m_address_len) return p ;
+    }
+  }
+  return NULL ; // Cannot find
+}
+
 MqttConnection* MqttSnRF24::new_connection()
 {
   MqttConnection *p = NULL, *prev = NULL ;
@@ -335,7 +358,10 @@ void MqttSnRF24::received_connect(uint8_t *sender_address, uint8_t *data, uint8_
     pthread_mutex_lock(&m_rwlock) ;
 
     MqttConnection *con = search_connection(szClientID) ;
-    if (!con) con = new_connection() ;
+    if (!con){
+      DPRINT("Cannot find an existing connection, creating a new new connection for %s\n", szClientID) ;
+      con = new_connection() ;
+    }
     if (!con){
       EPRINT("Cannot create a new connection record for client %s\n", szClientID) ;
       pthread_mutex_unlock(&m_rwlock) ;
@@ -343,11 +369,15 @@ void MqttSnRF24::received_connect(uint8_t *sender_address, uint8_t *data, uint8_
     }
     
     con->enabled = true ;
+    strcpy(con->szclientid, szClientID) ;
     con->duration = (data[2] << 8) | data[3] ; // MSB assumed
     memcpy(con->connect_address, sender_address, m_address_len) ;
     
     // If WILL if flagged then set the flags for the message and topic
-    con->prompt_will_topic = con->prompt_will_message = ((FLAG_WILL & data[0]) > 0);
+    bool will = ((FLAG_WILL & data[0]) > 0) ;
+    con->prompt_will_topic = will ;
+    con->prompt_will_message = will ;
+    con->connection_complete = false ; 
 
     pthread_mutex_unlock(&m_rwlock) ;
 
@@ -404,6 +434,7 @@ void MqttSnRF24::received_connack(uint8_t *sender_address, uint8_t *data, uint8_
     default:
       DPRINT("CONNACK: {return code = %u}\n", data[0]) ;
       // ? Are we connected ?
+      m_client_connection.enabled = false ; // Cannot connect
     }
     
     pthread_mutex_unlock(&m_rwlock) ;
@@ -413,22 +444,132 @@ void MqttSnRF24::received_connack(uint8_t *sender_address, uint8_t *data, uint8_
 
 void MqttSnRF24::received_willtopicreq(uint8_t *sender_address, uint8_t *data, uint8_t len)
 {
-
+  // Only clients need to respond to this
+  if (m_mqtt_type == client){
+    DPRINT("WILLTOPICREQ\n") ;
+    if (m_willtopicsize == 0){
+      // No topic set
+      queue_response(sender_address, MQTT_WILLTOPIC, NULL, 0) ;
+    }else{
+      uint8_t send[1+MQTT_TOPIC_MAX_BYTES];
+      send[0] = 0 ;
+      switch(m_willtopicqos){
+      case 0:
+	send[0] = FLAG_QOS0 ;
+	break ;
+      case 1:
+	send[0] = FLAG_QOS1 ;
+	break ;
+      case 2:
+      default: // Ignore other values and set to max QOS
+	send[0] = FLAG_QOS2 ;
+      }
+      // Any overflow of size should have been checked so shouldn't need to check again here.
+      memcpy(send+1, m_willtopic, m_willtopicsize) ;
+      queue_response(sender_address, MQTT_WILLTOPIC, send, m_willtopicsize+1) ;
+    }
+    m_client_connection.prompt_will_topic = false ; 
+  }
 }
 
 void MqttSnRF24::received_willtopic(uint8_t *sender_address, uint8_t *data, uint8_t len)
 {
+  if (m_mqtt_type == gateway){
+    char utf8[MQTT_TOPIC_MAX_BYTES+1] ;
+    wchar_t topic[MQTT_TOPIC_MAX_BYTES+1] ;
 
+    MqttConnection *con = search_connection_address(sender_address) ;
+    uint8_t buff[1] ;
+    if (!con){
+      EPRINT("WillTopic could not find the client connection\n") ;
+      buff[0] = MQTT_RETURN_CONGESTION ; // There is no "who are you?" response so this will do
+      queue_response(sender_address, MQTT_CONNACK, buff, 1) ;
+      return ;
+    }
+    
+    memcpy(utf8, data+1, len-1) ;
+    utf8[len-1] = '\0' ;
+    size_t ret = mbrtowc(topic, utf8, MQTT_TOPIC_MAX_BYTES, NULL) ;
+    if (ret < 0){
+      con->enabled = false ; // kill connection record
+      buff[0] = MQTT_RETURN_NOT_SUPPORTED ; // Assume something unsupported happened
+      queue_response(sender_address, MQTT_CONNACK, buff, 1) ;
+      EPRINT("WILLTOPIC failed to convert utf8 topic string\n") ;
+      return ;
+    }
+    uint8_t qos = 0;
+    if (data[0] & FLAG_QOS1) qos = 1;
+    else if (data[0] & FLAG_QOS2) qos =2 ;
+    
+    DPRINT("WILLTOPIC: QOS = %u, Topic = %s\n", qos, utf8) ;
+
+    // Client registered for connection
+    con->prompt_will_topic = false ; // received this now
+    if (con->prompt_will_message){
+      queue_response(sender_address, MQTT_WILLMSGREQ, NULL, 0) ;
+    }else{
+      con->connection_complete = true ; 
+      buff[0] = MQTT_RETURN_ACCEPTED ;
+      queue_response(sender_address, MQTT_CONNACK, buff, 1) ;
+    }
+  }
 }
 
 void MqttSnRF24::received_willmsgreq(uint8_t *sender_address, uint8_t *data, uint8_t len)
 {
+  // Only clients need to respond to this
+  if (m_mqtt_type == client){
+    DPRINT("WILLMSGREQ\n") ;
 
+    if (m_willmessagesize == 0){
+      // No topic set
+      queue_response(sender_address, MQTT_WILLMSG, NULL, 0) ;
+    }else{
+      uint8_t send[MQTT_MESSAGE_MAX_BYTES];
+
+      // Any overflow of size should have been checked so shouldn't need to check again here.
+      memcpy(send, m_willmessage, m_willmessagesize) ; 
+      queue_response(sender_address, MQTT_WILLMSG, send, m_willmessagesize) ;
+    }
+    m_client_connection.prompt_will_message = false ;
+  }
 }
 
 void MqttSnRF24::received_willmsg(uint8_t *sender_address, uint8_t *data, uint8_t len)
 {
+  if (m_mqtt_type == gateway){
+    char utf8[MQTT_MESSAGE_MAX_BYTES+1] ;
+    wchar_t message[MQTT_MESSAGE_MAX_BYTES+1] ;
 
+    MqttConnection *con = search_connection_address(sender_address) ;
+    uint8_t buff[1] ;
+    if (!con){
+      EPRINT("WillMsg could not find the client connection\n") ;
+      buff[0] = MQTT_RETURN_CONGESTION ; // There is no "who are you?" response so this will do
+      queue_response(sender_address, MQTT_CONNACK, buff, 1) ;
+      return ;
+    }
+
+    memcpy(utf8, data, len) ;
+    utf8[len] = '\0' ;
+    size_t ret = mbrtowc(message, utf8, MQTT_MESSAGE_MAX_BYTES, NULL) ;
+    if (ret < 0){
+      // Conversion failed
+      EPRINT("WILLMSG: failed to convert message from UTF8\n") ;
+      con->enabled = false ; // kill connection record with client
+      buff[0] = MQTT_RETURN_NOT_SUPPORTED ; // Assume something unsupported happened
+      queue_response(sender_address, MQTT_CONNACK, buff, 1) ;
+      return ;
+    }
+    
+    DPRINT("WILLMESSAGE: Message = %s\n", utf8) ;
+
+    // Client sent final will message
+    con->prompt_will_message = false ; // received this now
+    con->connection_complete = true ; 
+    buff[0] = MQTT_RETURN_ACCEPTED ;
+    queue_response(sender_address, MQTT_CONNACK, buff, 1) ;
+  }  
 }
 
 
@@ -454,6 +595,13 @@ void MqttSnRF24::initialise(enType type, uint8_t address_len, uint8_t *broadcast
   m_address_len = address_len ;
   m_mqtt_type = type ;
 
+  // Reset will attributes
+  m_willtopic[0] = '\0' ;
+  m_willtopicsize = 0 ;
+  m_willtopicqos = 0 ;
+  m_willmessage[0] = '\0' ;
+  m_willmessagesize = 0;
+  
   auto_update(true);
   if (!set_address_width(m_address_len))
     throw MqttIOErr("cannot set address width") ;
@@ -695,7 +843,7 @@ bool MqttSnRF24::advertise(uint16_t duration)
   return false ;
 }
 
-bool MqttSnRF24::connect(bool will, bool clean, uint16_t duration)
+bool MqttSnRF24::connect(uint8_t gwid, bool will, bool clean, uint16_t duration)
 {
   MqttGwInfo *gw ;
   uint8_t buff[MQTT_PAYLOAD_WIDTH-2] ;
@@ -705,7 +853,7 @@ bool MqttSnRF24::connect(bool will, bool clean, uint16_t duration)
   buff[3] = duration & 0x00FF ;
 
   pthread_mutex_lock(&m_rwlock) ;
-  if (!(gw = get_available_gateway())){
+  if (!(gw = get_gateway(gwid))){
     pthread_mutex_unlock(&m_rwlock) ;
     return false ;
   }
@@ -732,6 +880,7 @@ bool MqttSnRF24::connect(bool will, bool clean, uint16_t duration)
       return true ;
     }catch(BuffMaxRetry &e){
       // Do nothing, continue in for loop
+      nano_sleep(1,0) ;
     }
   }
   return false ;
@@ -739,7 +888,47 @@ bool MqttSnRF24::connect(bool will, bool clean, uint16_t duration)
 
 bool MqttSnRF24::connect_expired()
 {
-  return (time(NULL) > (m_connect_start+m_connect_timeout)) ;
+  if (time(NULL) > (m_connect_start+m_connect_timeout)){
+    return true ;
+  }
+  
+  return false ;
+}
+
+ void MqttSnRF24::set_willtopic(const wchar_t *topic, uint8_t qos)
+{
+  if (topic == NULL){
+    m_willtopic[0] = '\0' ; // Clear the topic
+    m_willtopicsize = 0;
+  }
+  size_t len = wcslen(topic) ;
+  if (len > (unsigned)(MQTT_TOPIC_SAFE_BYTES + (MAX_RF24_ADDRESS_LEN - m_address_len))){
+    throw MqttOutOfRange("topic too long for payload") ;
+  }
+  
+  size_t ret = wcstombs(m_willtopic, topic, (MQTT_TOPIC_SAFE_BYTES + (MAX_RF24_ADDRESS_LEN - m_address_len))) ;
+
+  if (ret < 0) throw MqttOutOfRange("topic string conversion error") ;
+
+  m_willtopicsize = ret ;
+  m_willtopicqos = qos ;
+}
+
+void MqttSnRF24::set_willmessage(const wchar_t *message)
+{
+  if (message == NULL){
+    m_willmessage[0] = '\0' ;
+    m_willmessagesize = 0 ;
+  }
+  
+  size_t len = wcslen(message) ;
+  if (len > (unsigned)(MQTT_MESSAGE_SAFE_BYTES + (MAX_RF24_ADDRESS_LEN - m_address_len)))
+    throw MqttOutOfRange("message too long for payload") ;
+  size_t ret = wcstombs(m_willmessage, message, (MQTT_MESSAGE_SAFE_BYTES + (MAX_RF24_ADDRESS_LEN - m_address_len))) ;
+
+  if (ret < 0) throw MqttOutOfRange("message string conversion error") ;
+
+  m_willmessagesize = ret ;
 }
 
 MqttGwInfo* MqttSnRF24::get_available_gateway()
@@ -747,6 +936,16 @@ MqttGwInfo* MqttSnRF24::get_available_gateway()
   for (unsigned int i=0; i < MAX_GATEWAYS;i++){
     if (m_gwinfo[i].allocated && m_gwinfo[i].active){
       // return the first known gateway
+      return &(m_gwinfo[i]) ;
+    }
+  }
+  return NULL ;
+}
+
+MqttGwInfo* MqttSnRF24::get_gateway(uint8_t gwid)
+{
+  for (unsigned int i=0; i < MAX_GATEWAYS;i++){
+    if (m_gwinfo[i].allocated && m_gwinfo[i].active && m_gwinfo[i].gw_id == gwid){
       return &(m_gwinfo[i]) ;
     }
   }
@@ -762,4 +961,29 @@ uint8_t *MqttSnRF24::get_gateway_address()
     }
   }
   return NULL ; // No gateways are known
+}
+
+bool MqttSnRF24::get_known_gateway(uint8_t *gwid)
+{
+  MqttGwInfo *gw = get_available_gateway();
+
+  if (!gw) return false;
+  *gwid = gw->gw_id ;
+
+  return true ;
+}
+
+bool MqttSnRF24::is_gateway_valid(uint8_t gwid)
+{
+  for (unsigned int i=0; i < MAX_GATEWAYS;i++){
+    if (m_gwinfo[i].allocated && m_gwinfo[i].active && m_gwinfo[i].gw_id == gwid){
+      // Check if it has expired
+      if (m_gwinfo[i].advertised_expired()){
+	m_gwinfo[i].active = false ;
+	return false ;
+      }
+      return true ;
+    }
+  }
+  return false ; // No gateway with this id found
 }
