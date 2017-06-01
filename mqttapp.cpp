@@ -173,9 +173,10 @@ int main(int argc, char **argv)
   }
   
   time_t now = time(NULL) ;
-  time_t last_advertised = 0, last_search = 0 ;
+  time_t last_advertised = 0, last_search = 0,last_ping = 0 ;
   const uint16_t advertise_interval = 15 ;
   const uint16_t search_interval = 5 ;
+  const uint16_t ping_interval = 15 ;
   bool ret = false ;
   bool gateway_known = false ;
   uint8_t gwhandle =0;
@@ -209,8 +210,11 @@ int main(int argc, char **argv)
 	    mqtt.set_willtopic(L"a/b/c/d", 0) ;
   	    mqtt.set_willmessage(L"Hello World") ;
 	    
-	    if (mqtt.connect(gwhandle, true, true, 32))
+	    if (mqtt.connect(gwhandle, true, true, ping_interval + 10))
 	      printf("sending connect\n") ;
+	  }else if (last_ping + ping_interval < now){
+	    // Send a ping to connected GW
+	    mqtt.ping(gwhandle) ;
 	  }
 	}
       }

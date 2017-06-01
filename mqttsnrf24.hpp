@@ -77,6 +77,10 @@ public:
     gwid = 0 ;
     enabled = false ;
     connection_complete = false ;
+    lastactivity = 0 ;
+  }
+  void ping(){
+    lastactivity = time(NULL) ;
   }
   MqttConnection *next; // linked list of connections (gw only)
   MqttConnection *prev ; // linked list of connections (gw only)
@@ -88,6 +92,7 @@ public:
   bool prompt_will_topic ; // waiting for will topic
   bool prompt_will_message ; // waiting for will message
   uint16_t duration ; // duration
+  time_t lastactivity ; // when did we last hear from the client (sec)
 };
 
 class MqttGwInfo{
@@ -99,6 +104,8 @@ public:
     address_length=0;
     m_ad_time = 0 ;
     m_ad_duration = 0 ;
+    m_lastactivity = 0 ;
+    m_keepalive = 0 ;
   }
   uint8_t address[MAX_RF24_ADDRESS_LEN] ;
   uint8_t address_length ;
@@ -107,15 +114,26 @@ public:
   bool allocated ;
   void advertised(uint16_t t){
     m_ad_time = time(NULL) ;
+    m_lastactivity = m_ad_time ; // update activity as well
     m_ad_duration = t + 60 ; // add 1 min grace
+  }
+  void keepalive(uint16_t t){
+    m_keepalive = t ;
   }
   bool advertised_expired(){
     return (time(NULL) > (m_ad_time + m_ad_duration)) ;
   }
+  void ping(){
+    m_lastactivity = time(NULL);
+  }
+  bool is_active(){
+    return (time(NULL) > m_lastactivity + m_keepalive);
+  }
 protected:
   time_t m_ad_time ;
   uint16_t m_ad_duration ;
-  
+  time_t m_lastactivity ;
+  uint16_t m_keepalive ;
 };
 
 class MqttSnRF24 : public BufferedRF24{
@@ -167,6 +185,13 @@ public:
   bool connect_expired() ; // has the connect request expired?
   void set_willtopic(const wchar_t *topic, uint8_t qos) ;
   void set_willmessage(const wchar_t *message) ;
+
+  // Ping for use by a gateway to check a client is alive
+  // Returns false if client is not connected or ping fails (with ACK)
+  bool ping(char *szclientid) ;
+  // Ping for use by a client to check a gateway is alive
+  // Returns false if gateway is unknown or transmit failed (with ACK)
+  bool ping(uint8_t gw);
   
   // send all queued responses
   // returns false if a message cannot be sent.
@@ -192,8 +217,11 @@ protected:
   void received_willtopic(uint8_t *sender_address, uint8_t *data, uint8_t len) ;
   void received_willmsgreq(uint8_t *sender_address, uint8_t *data, uint8_t len) ;
   void received_willmsg(uint8_t *sender_address, uint8_t *data, uint8_t len) ;
+  void received_pingresp(uint8_t *sender_address, uint8_t *data, uint8_t len) ;
+  void received_pingreq(uint8_t *sender_address, uint8_t *data, uint8_t len) ;
 
   MqttGwInfo* get_gateway(uint8_t gwid);
+  MqttGwInfo* get_gateway_address(uint8_t *gwaddress) ;
   MqttGwInfo* get_available_gateway();
   uint8_t *get_gateway_address();
   MqttConnection* search_connection(char *szclientid);
