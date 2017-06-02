@@ -18,6 +18,7 @@
 #include <stdio.h>
 #include <wchar.h>
 #include <stdlib.h>
+#include <locale.h>
 
 #ifndef _BV
 #define _BV(x) 1 << x
@@ -1007,9 +1008,21 @@ void MqttSnRF24::set_willmessage(const wchar_t *message)
   size_t len = wcslen(message) ;
   if (len > (unsigned)(MQTT_MESSAGE_SAFE_BYTES + (MAX_RF24_ADDRESS_LEN - m_address_len)))
     throw MqttOutOfRange("message too long for payload") ;
+
+  char *curlocale = setlocale(LC_CTYPE, NULL);
+  
+  if (!setlocale(LC_CTYPE, "en_GB.UTF-8")){
+    throw MqttOutOfRange("cannot set UTF locale") ;
+  }
+    
   size_t ret = wcstombs(m_willmessage, message, (MQTT_MESSAGE_SAFE_BYTES + (MAX_RF24_ADDRESS_LEN - m_address_len))) ;
 
-  if (ret < 0) throw MqttOutOfRange("message string conversion error") ;
+  setlocale(LC_CTYPE, curlocale) ; // reset locale
+  
+  if (ret < 0){
+    DPRINT("Throwing exception - cannot convert will message to UTF-8\n") ;
+    throw MqttOutOfRange("message string conversion error") ;
+  }
 
   m_willmessagesize = ret ;
 }

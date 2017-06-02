@@ -208,13 +208,14 @@ int main(int argc, char **argv)
 	if (mqtt.is_gateway_valid(gwhandle)){
 	  if (mqtt.connect_expired()){
 	    mqtt.set_willtopic(L"a/b/c/d", 0) ;
-  	    mqtt.set_willmessage(L"Hello World") ;
+  	    mqtt.set_willmessage(L"Hello World\x00A9") ;
 	    
 	    if (mqtt.connect(gwhandle, true, true, ping_interval + 10))
 	      printf("sending connect\n") ;
 	  }else if (last_ping + ping_interval < now){
 	    // Send a ping to connected GW
 	    mqtt.ping(gwhandle) ;
+	    last_ping = now ;
 	  }
 	}
       }
