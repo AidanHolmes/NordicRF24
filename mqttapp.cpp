@@ -217,6 +217,8 @@ int main(int argc, char **argv)
 	    mqtt.ping(gwhandle) ;
 	    last_ping = now ;
 	  }
+	}else{
+	  gateway_known = false ;
 	}
       }
     }

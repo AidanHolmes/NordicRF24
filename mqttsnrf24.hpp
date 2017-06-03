@@ -73,18 +73,25 @@ public:
     prev = NULL ;
     prompt_will_topic = false ;
     prompt_will_message = false ;
-    duration = 0 ;
+    duration = 0 ; // keep alive timer
     gwid = 0 ;
-    enabled = false ;
+    enabled = false ; // client not heard from becomes disabled
+    disconnected = false ;
     connection_complete = false ;
     lastactivity = 0 ;
+    sleep_duration = 0 ;
+    asleep_from = 0 ;
   }
   void ping(){
     lastactivity = time(NULL) ;
   }
+  bool is_asleep(){
+    return (time(NULL) < asleep_from+sleep_duration) ;
+  }
   MqttConnection *next; // linked list of connections (gw only)
   MqttConnection *prev ; // linked list of connections (gw only)
   bool enabled ; // This record is valid
+  bool disconnected ; // client issued a disconnect if true
   bool connection_complete ; // protocol complete
   char szclientid[MAX_MQTT_CLIENTID+1] ; // client id for gw
   uint8_t gwid ; // gw id for client connections
@@ -93,6 +100,8 @@ public:
   bool prompt_will_message ; // waiting for will message
   uint16_t duration ; // duration
   time_t lastactivity ; // when did we last hear from the client (sec)
+  time_t asleep_from ;
+  uint16_t sleep_duration ;
 };
 
 class MqttGwInfo{
@@ -186,6 +195,11 @@ public:
   void set_willtopic(const wchar_t *topic, uint8_t qos) ;
   void set_willmessage(const wchar_t *message) ;
 
+  // Disconnect. Optional sleep duration can be set. If zero then
+  // no sleep timer will be set
+  // Returns false if disconnect cannot be sent (ACK enabled)
+  bool disconnect(uint16_t sleep_duration = 0) ;
+
   // Ping for use by a gateway to check a client is alive
   // Returns false if client is not connected or ping fails (with ACK)
   bool ping(char *szclientid) ;
@@ -219,6 +233,7 @@ protected:
   void received_willmsg(uint8_t *sender_address, uint8_t *data, uint8_t len) ;
   void received_pingresp(uint8_t *sender_address, uint8_t *data, uint8_t len) ;
   void received_pingreq(uint8_t *sender_address, uint8_t *data, uint8_t len) ;
+  void received_disconnect(uint8_t *sender_address, uint8_t *data, uint8_t len) ;
 
   MqttGwInfo* get_gateway(uint8_t gwid);
   MqttGwInfo* get_gateway_address(uint8_t *gwaddress) ;

@@ -414,6 +414,9 @@ void MqttSnRF24::received_connect(uint8_t *sender_address, uint8_t *data, uint8_
     }
     
     con->enabled = true ;
+    con->disconnected = false ;
+    con->sleep_duration = 0 ;
+    con->asleep_from = 0 ;
     con->ping() ; // update activity from client
     strcpy(con->szclientid, szClientID) ;
     con->duration = (data[2] << 8) | data[3] ; // MSB assumed
@@ -621,6 +624,10 @@ void MqttSnRF24::received_willmsg(uint8_t *sender_address, uint8_t *data, uint8_
   }  
 }
 
+void MqttSnRF24::received_disconnect(uint8_t *sender_address, uint8_t *data, uint8_t len)
+{
+
+}
 
 void MqttSnRF24::set_client_id(const char *szclientid)
 {
@@ -924,6 +931,31 @@ bool MqttSnRF24::ping(char *szclientid)
     }
   }
   return false ; // failed to send the ping
+}
+
+bool MqttSnRF24::disconnect(uint16_t sleep_duration)
+{
+  uint8_t buff[2] ;
+  uint8_t len = 0 ;
+  // Already disconnected or other issue closed the connection
+  if (!m_client_connection.enabled) return false ;
+
+  if (sleep_duration > 0){
+    buff[0] = sleep_duration >> 8 ; //MSB set first
+    buff[1] = sleep_duration & 0x00FF ;
+    len = 2 ;
+  }
+
+  for(uint16_t retry = 0;retry < m_max_retries+1;retry++){
+    try{
+      writemqtt(m_client_connection.connect_address, MQTT_DISCONNECT, buff, len) ;
+      m_client_connection.enabled = false ;
+      return true ;
+    }catch(BuffMaxRetry &e){
+      // Do nothing, continue in for loop
+    }
+  }
+  return false ; // failed to send the diconnect
 }
 
 bool MqttSnRF24::connect(uint8_t gwid, bool will, bool clean, uint16_t duration)
