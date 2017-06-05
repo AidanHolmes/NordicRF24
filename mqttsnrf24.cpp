@@ -189,6 +189,9 @@ bool MqttSnRF24::data_received_interrupt()
       case MQTT_PINGRESP:
 	received_pingresp(sender_addr, mqtt_payload, length) ;
 	break ;
+      case MQTT_DISCONNECT:
+	received_disconnect(sender_addr, mqtt_payload, length) ;
+	break;
 	//default:
 	// Not expected message.
 	// This is not a 1.2 MQTT message
@@ -626,7 +629,38 @@ void MqttSnRF24::received_willmsg(uint8_t *sender_address, uint8_t *data, uint8_
 
 void MqttSnRF24::received_disconnect(uint8_t *sender_address, uint8_t *data, uint8_t len)
 {
+  if (m_mqtt_type == gateway){
+    // Disconnect request from client
+    MqttConnection *con = search_connection_address(sender_address);
+    if (!con){
+      DPRINT("Disconnect received from unknown client. Ignoring\n") ;
+      return ;
+    }
+    time_t time_now = time(NULL) ;
+    if (len == 2){
+      // Contains a duration
+      con->sleep_duration = (data[0] << 8) | data[1] ; // MSB assumed
+      DPRINT("DISCONNECT: sleeping for %u sec\n", con->sleep_duration) ;
+      con->asleep_from = time_now ;
+    }else{
+      DPRINT("DISCONNECT\n") ;
+      con->enabled = false ; // disconnected without sleep
+      // Connection could be deleted...
+    }
+    con->disconnected = true ;
+    con->connection_complete = false ;
+    con->lastactivity = time_now ;
 
+    queue_response(sender_address, MQTT_DISCONNECT, NULL, 0) ;
+
+  }else if (m_mqtt_type == client){
+    // Disconnect request from server to client
+    // probably due to an error
+    DPRINT("DISCONNECT\n") ;
+    m_client_connection.enabled = false;
+    m_client_connection.disconnected = true ;
+  }
+  
 }
 
 void MqttSnRF24::set_client_id(const char *szclientid)
