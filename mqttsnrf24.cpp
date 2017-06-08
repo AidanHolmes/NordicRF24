@@ -95,7 +95,6 @@ MqttSnRF24::MqttSnRF24()
   m_mqtt_type = client ;
   m_queue_head = 0 ;
   m_max_retries = 3 ;
-  m_connect_timeout = 20 ; // sec
   m_connection_head = NULL ;
 
   m_willmessage[0] = '\0' ;
@@ -103,11 +102,19 @@ MqttSnRF24::MqttSnRF24()
   m_willtopic[0] = '\0' ;
   m_willtopicsize = 0 ;
   m_willtopicqos = 0;
+
+  m_last_advertised = 0 ;
+  m_advertise_interval = 1500 ;
 }
 
 MqttSnRF24::~MqttSnRF24()
 {
   
+}
+
+void MqttSnRF24::set_advertise_interval(uint16_t t)
+{
+  m_advertise_interval = t ;
 }
 
 bool MqttSnRF24::data_received_interrupt()
@@ -440,6 +447,7 @@ void MqttSnRF24::received_connect(uint8_t *sender_address, uint8_t *data, uint8_
       // No need for WILL setup, just CONNACK
       uint8_t buff[1] ;
       buff[0] = MQTT_RETURN_ACCEPTED ;
+      con->connection_complete = true ;
       queue_response(sender_address, MQTT_CONNACK, buff, 1) ;
     }
     
@@ -808,6 +816,58 @@ void MqttSnRF24::queue_response(uint8_t *addr,
   pthread_mutex_unlock(&m_rwlock) ;
 }
 
+bool MqttSnRF24::manage_connections()
+{
+  if (m_mqtt_type == client){
+    // if connection is enabled and complete
+    // excludes asleep connections
+    if (m_client_connection.is_connected()){
+      if (m_client_connection.lost_contact()){
+	// Close connection. Take down connection
+	m_client_connection.enabled = false;
+	m_client_connection.disconnected = true ;
+	m_client_connection.connection_complete = false ;
+      }else{
+	// Another ping due?      
+	if (m_client_connection.send_another_ping())
+	  ping(m_client_connection.gwid) ;
+      }
+    }
+    // Refresh GW information
+    for (unsigned int i=0; i < MAX_GATEWAYS;i++){
+      if (m_gwinfo[i].allocated && m_gwinfo[i].active){
+	// Check if it has expired
+	if (m_client_connection.is_connected() &&
+	    m_gwinfo[i].gw_id == m_client_connection.gwid){
+	  // ignore the connected gateway as this has been checked
+	  continue ;
+	}
+	if (m_gwinfo[i].advertised_expired()){
+	  // Updated state to inactive as this gateway is not
+	  // advertising
+	  m_gwinfo[i].active = false ;
+	}
+      }
+    }
+
+    // TO DO - Issue search if no gateways. Currently managed by APP
+	
+  }else if (m_mqtt_type == gateway){
+    time_t now = time(NULL) ;
+    // TO DO. Check all client connections and
+    // send disconnects if client is not alive
+
+    // TO DO. Send Advertise messages
+    if (m_last_advertised+m_advertise_interval < now){
+      DPRINT("Sending Advertised\n") ;
+      advertise(m_advertise_interval) ;
+      m_last_advertised = now ;
+    }
+  }
+  
+  return dispatch_queue() ;
+}
+
 bool MqttSnRF24::dispatch_queue()
 {
   bool ret = true ;
@@ -1022,10 +1082,11 @@ bool MqttSnRF24::connect(uint8_t gwid, bool will, bool clean, uint16_t duration)
       // Record the start of the connection
       m_connect_start = time(NULL) ;
       m_client_connection.enabled = true ; // Sent request, so enable
+      m_client_connection.connection_complete = false ; // orchestration started
       m_client_connection.prompt_will_topic = will ;
       m_client_connection.prompt_will_message = will ;
-      m_client_connection.duration = duration ; // not used
-      gw->keepalive(duration) ; // set the keep alive
+      m_client_connection.duration = duration ; // keep alive timer for connection
+      gw->keepalive(duration) ; // set the keep alive in GW register
 
       return true ;
     }catch(BuffMaxRetry &e){
@@ -1036,16 +1097,56 @@ bool MqttSnRF24::connect(uint8_t gwid, bool will, bool clean, uint16_t duration)
   return false ;
 }
 
-bool MqttSnRF24::connect_expired()
+bool MqttSnRF24::connect_expired(uint16_t retry_time)
 {
-  if (time(NULL) > (m_connect_start+m_connect_timeout)){
+  if (time(NULL) > (m_connect_start+retry_time)){
     return true ;
   }
   
   return false ;
 }
 
- void MqttSnRF24::set_willtopic(const wchar_t *topic, uint8_t qos)
+bool MqttSnRF24::is_gateway_valid(uint8_t gwid)
+{
+  for (unsigned int i=0; i < MAX_GATEWAYS;i++){
+    if (m_gwinfo[i].allocated && m_gwinfo[i].active && m_gwinfo[i].gw_id == gwid){
+      // Check if it has expired
+      if (m_gwinfo[i].is_active()){
+	m_gwinfo[i].active = false ;
+	return false ;
+      }
+      return true ;
+    }
+  }
+  return false ; // No gateway with this id found
+}
+
+bool MqttSnRF24::is_connected(uint8_t gwid)
+{
+  if (m_client_connection.is_connected() && 
+      m_client_connection.gwid == gwid
+      ){
+    // Check if it has expired
+    if (m_client_connection.lost_contact()){
+      // gateway was connected but has expired.
+      // update connection attributes
+      m_client_connection.connection_complete = false ;
+      m_client_connection.enabled = false;
+      return false ; 
+    }else{
+      return true ;
+    }
+  }
+  return false ; // No gateway found with complete connection
+}
+
+bool MqttSnRF24::is_connected()
+{
+  // use the current gw id. 
+  return is_connected(m_client_connection.gwid) ;
+}
+
+void MqttSnRF24::set_willtopic(const wchar_t *topic, uint8_t qos)
 {
   if (topic == NULL){
     m_willtopic[0] = '\0' ; // Clear the topic
@@ -1153,17 +1254,3 @@ bool MqttSnRF24::get_known_gateway(uint8_t *gwid)
   return true ;
 }
 
-bool MqttSnRF24::is_gateway_valid(uint8_t gwid)
-{
-  for (unsigned int i=0; i < MAX_GATEWAYS;i++){
-    if (m_gwinfo[i].allocated && m_gwinfo[i].active && m_gwinfo[i].gw_id == gwid){
-      // Check if it has expired
-      if (m_gwinfo[i].is_active()){
-	m_gwinfo[i].active = false ;
-	return false ;
-      }
-      return true ;
-    }
-  }
-  return false ; // No gateway with this id found
-}

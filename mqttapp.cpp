@@ -173,10 +173,10 @@ int main(int argc, char **argv)
   }
   
   time_t now = time(NULL) ;
-  time_t last_advertised = 0, last_search = 0,last_ping = 0 ;
-  const uint16_t advertise_interval = 15 ;
-  const uint16_t search_interval = 5 ;
-  const uint16_t ping_interval = 15 ;
+  time_t last_search = 0 ;
+  const uint16_t search_interval = 5 ; // sec
+  const uint16_t ping_interval = 5 ; // sec
+  const uint16_t t_retry = 15 ; // sec
   bool ret = false ;
   bool gateway_known = false ;
   uint8_t gwhandle =0;
@@ -185,14 +185,8 @@ int main(int argc, char **argv)
   for ( ; ; ){
     now = time(NULL) ;
     if (opt_gw){
-      if (last_advertised+advertise_interval < now){
-	printf ("sending advertised - ") ;
-	ret = mqtt.advertise(advertise_interval) ;
-	printf ("%s\n", ret?"ok":"failed") ;
-	last_advertised = now ;
-      }
-      
-    }else{
+      // Nowt
+    }else{ // client
       if (!gateway_known){
 	// Send a search request
 	if (last_search+search_interval < now){
@@ -204,25 +198,24 @@ int main(int argc, char **argv)
 	// Check for responses
 	gateway_known = mqtt.get_known_gateway(&gwhandle) ;
       }else{
-	// Known gateway
-	if (mqtt.is_gateway_valid(gwhandle)){
-	  if (mqtt.connect_expired()){
-	    mqtt.set_willtopic(L"a/b/c/d", 0) ;
-  	    mqtt.set_willmessage(L"Hello World\x00A9") ;
+	// Known gateway. Check if the gateway is alive and connected
+	if (!mqtt.is_connected(gwhandle)){
+	  mqtt.set_willtopic(L"a/b/c/d", 0) ;
+	  mqtt.set_willmessage(L"Hello World\x00A9") ;
 	    
-	    if (mqtt.connect(gwhandle, true, true, ping_interval + 10))
-	      printf("sending connect\n") ;
-	  }else if (last_ping + ping_interval < now){
-	    // Send a ping to connected GW
-	    mqtt.ping(gwhandle) ;
-	    last_ping = now ;
-	  }
-	}else{
+	  if (mqtt.connect(gwhandle, true, true, ping_interval))
+	    printf("sending connect\n") ;
+	}
+
+	// Has the gateway been responsive?
+	// This may compliment the question; is the connection up and
+	// is the gateway responding?
+	if (mqtt.is_gateway_valid(gwhandle)){
 	  gateway_known = false ;
 	}
       }
     }
-    mqtt.dispatch_queue() ;
+    mqtt.manage_connections() ;
     nano_sleep(0, 5000000) ; // 5ms wait
   }
 

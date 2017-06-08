@@ -81,12 +81,26 @@ public:
     lastactivity = 0 ;
     sleep_duration = 0 ;
     asleep_from = 0 ;
+    last_ping =0;
   }
-  void ping(){
+  void ping(){ // received activity from client or server
     lastactivity = time(NULL) ;
+  }
+  bool send_another_ping(){
+    return ((last_ping + duration) < time(NULL)) ;
   }
   bool is_asleep(){
     return (time(NULL) < asleep_from+sleep_duration) ;
+  }
+  bool is_connected(){
+    // Ignoring timers, does this connection think it's connected?
+    return (enabled &&
+	    !disconnected &&
+	    connection_complete) ;
+  }
+  bool lost_contact(){
+    // give 10% additional time or 50% under 1 min
+    return ((lastactivity + (duration * ((duration <= 60)?1.5:1.1))) < time(NULL)) ;
   }
   MqttConnection *next; // linked list of connections (gw only)
   MqttConnection *prev ; // linked list of connections (gw only)
@@ -98,10 +112,11 @@ public:
   uint8_t connect_address[MAX_RF24_ADDRESS_LEN] ; // client or gw address
   bool prompt_will_topic ; // waiting for will topic
   bool prompt_will_message ; // waiting for will message
-  uint16_t duration ; // duration
+  uint16_t duration ; // keep alive duration
   time_t lastactivity ; // when did we last hear from the client (sec)
   time_t asleep_from ;
   uint16_t sleep_duration ;
+  time_t last_ping ;
 };
 
 class MqttGwInfo{
@@ -159,6 +174,9 @@ public:
   // mode
   void initialise(enType type, uint8_t address_len, uint8_t *broadcast, uint8_t *address) ;
 
+  // Gateways can define how often the advertise is sent
+  void set_advertise_interval(uint16_t t) ;
+  
   // Powers down the radio. Call initialise to power up again
   void shutdown() ;
 
@@ -191,7 +209,9 @@ public:
   // Returns false if connection couldn't be made due to timeout or
   // no known gateway to connect to. Timeouts only detected if using ACKS on pipes
   bool connect(uint8_t gwid, bool will, bool clean, uint16_t duration) ; 
-  bool connect_expired() ; // has the connect request expired?
+  bool connect_expired(uint16_t retry_time) ; // has the connect request expired?
+  bool is_connected(uint8_t gwid) ; // are we connected to this gw?
+  bool is_connected() ; // are we connected to any gateway?
   void set_willtopic(const wchar_t *topic, uint8_t qos) ;
   void set_willmessage(const wchar_t *message) ;
 
@@ -207,10 +227,9 @@ public:
   // Returns false if gateway is unknown or transmit failed (with ACK)
   bool ping(uint8_t gw);
   
-  // send all queued responses
-  // returns false if a message cannot be sent.
-  // Recommend retrying later if it fails (only applies if using acks on pipes)
-  bool dispatch_queue();
+  // Handles connections to gateways or to clients. Dispatches queued messages
+  // Will return false if a queued message cannot be dispatched.
+  bool manage_connections() ;
 
   // Returns true if known gateway exists. Sets gwid to known gateway handle
   // returns false if no known gateways exist
@@ -221,6 +240,11 @@ public:
   bool is_gateway_valid(uint8_t gwid);
 
 protected:
+  // send all queued responses
+  // returns false if a message cannot be sent.
+  // Recommend retrying later if it fails (only applies if using acks on pipes)
+  bool dispatch_queue();
+
   virtual bool data_received_interrupt() ;
   void received_advertised(uint8_t *sender_address, uint8_t *data, uint8_t len) ;
   void received_searchgw(uint8_t *sender_address, uint8_t *data, uint8_t len) ;
@@ -274,13 +298,16 @@ protected:
 
   // Connection attributes for a client
   time_t m_connect_start ;
-  uint16_t m_connect_timeout ;
   MqttConnection m_client_connection ;
   char m_willtopic[MQTT_TOPIC_MAX_BYTES+1] ;
   char m_willmessage[MQTT_MESSAGE_MAX_BYTES+1] ;
   size_t m_willtopicsize ;
   size_t m_willmessagesize ;
   uint8_t m_willtopicqos ;
+
+  // Gateway connection attributes
+  time_t m_last_advertised ;
+  uint16_t m_advertise_interval ;
 };
 
 
