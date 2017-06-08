@@ -1068,6 +1068,7 @@ bool MqttSnRF24::ping(char *szclientid)
   for(uint16_t retry = 0;retry < m_max_retries+1;retry++){
     try{
       writemqtt(con->connect_address, MQTT_PINGREQ, NULL, 0) ;
+      con->last_ping = time(NULL) ;
       return true ;
     }catch(BuffMaxRetry &e){
       // Do nothing, continue in for loop
