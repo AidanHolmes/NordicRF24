@@ -36,6 +36,13 @@ public:
   }
 };
 
+class MqttConnectErr : public RF24Exception{
+public:
+  MqttConnectErr(const char *sz){
+    do_except("Connection error: ", sz) ;
+  }
+};
+
 class MqttOutOfRange : public RF24Exception{
 public:
   MqttOutOfRange(const char *sz){
@@ -83,11 +90,11 @@ public:
     asleep_from = 0 ;
     last_ping =0;
   }
-  void ping(){ // received activity from client or server
+  void update_activity(){ // received activity from client or server
     lastactivity = time(NULL) ;
   }
   bool send_another_ping(){
-    return ((last_ping + duration) < time(NULL)) ;
+    return ((last_ping + (duration)) < time(NULL)) ;
   }
   bool is_asleep(){
     return (time(NULL) < asleep_from+sleep_duration) ;
@@ -99,8 +106,9 @@ public:
 	    connection_complete) ;
   }
   bool lost_contact(){
-    // give 10% additional time or 50% under 1 min
-    return ((lastactivity + (duration * ((duration <= 60)?1.5:1.1))) < time(NULL)) ;
+    // Give 5 retries before failing. This mutliplies the time assuming that
+    // all pings will be sent timely
+    return ((lastactivity + (duration * 5)) < time(NULL)) ;
   }
   MqttConnection *next; // linked list of connections (gw only)
   MqttConnection *prev ; // linked list of connections (gw only)
@@ -147,7 +155,7 @@ public:
   bool advertised_expired(){
     return (time(NULL) > (m_ad_time + m_ad_duration)) ;
   }
-  void ping(){
+  void update_activity(){
     m_lastactivity = time(NULL);
   }
   bool is_active(){
@@ -210,6 +218,7 @@ public:
   // no known gateway to connect to. Timeouts only detected if using ACKS on pipes
   bool connect(uint8_t gwid, bool will, bool clean, uint16_t duration) ; 
   bool connect_expired(uint16_t retry_time) ; // has the connect request expired?
+  bool connect_max_retry(bool reset); // Has exceeded retry counter?
   bool is_connected(uint8_t gwid) ; // are we connected to this gw?
   bool is_connected() ; // are we connected to any gateway?
   void set_willtopic(const wchar_t *topic, uint8_t qos) ;
@@ -238,6 +247,8 @@ public:
   // Check gateway handle. If gateway has been lost then this will return false,
   // otherwise it will be true
   bool is_gateway_valid(uint8_t gwid);
+
+  void print_gw_table() ;
 
 protected:
   // send all queued responses
@@ -298,6 +309,7 @@ protected:
 
   // Connection attributes for a client
   time_t m_connect_start ;
+  uint16_t m_connect_retries ;
   MqttConnection m_client_connection ;
   char m_willtopic[MQTT_TOPIC_MAX_BYTES+1] ;
   char m_willmessage[MQTT_MESSAGE_MAX_BYTES+1] ;

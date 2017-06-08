@@ -195,24 +195,34 @@ int main(int argc, char **argv)
 	  printf ("%s\n", ret?"ok":"failed") ;
 	  last_search = now ;
 	}
+	
 	// Check for responses
 	gateway_known = mqtt.get_known_gateway(&gwhandle) ;
       }else{
 	// Known gateway. Check if the gateway is alive and connected
-	if (!mqtt.is_connected(gwhandle)){
+	if (!mqtt.is_connected(gwhandle) &&
+	    mqtt.connect_expired(t_retry)){
 	  mqtt.set_willtopic(L"a/b/c/d", 0) ;
 	  mqtt.set_willmessage(L"Hello World\x00A9") ;
-	    
-	  if (mqtt.connect(gwhandle, true, true, ping_interval))
-	    printf("sending connect\n") ;
+
+	  if (mqtt.connect_max_retry(true)){
+	    gateway_known = false ;
+	  }else{
+	    try{
+	      if (mqtt.connect(gwhandle, true, true, ping_interval))
+		printf("Sending connect to %u\n", gwhandle) ;
+	    }catch (MqttConnectErr &e){
+	      gateway_known = false ;
+	    }
+	  }
 	}
 
 	// Has the gateway been responsive?
 	// This may compliment the question; is the connection up and
 	// is the gateway responding?
-	if (mqtt.is_gateway_valid(gwhandle)){
-	  gateway_known = false ;
-	}
+	//if (mqtt.is_gateway_valid(gwhandle)){
+	//  gateway_known = false ;
+	//}
       }
     }
     mqtt.manage_connections() ;
