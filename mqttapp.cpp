@@ -31,6 +31,7 @@ int opt_irq = 0,
   opt_ce = 0,
   opt_gw = 0,
   opt_channel = 0,
+  opt_cname = 0,
   opt_speed = 1;
 
 void siginterrupt(int sig)
@@ -46,14 +47,15 @@ void siginterrupt(int sig)
 
 int main(int argc, char **argv)
 {
-  const char usage[] = "Usage: %s -c ce -i irq -a address -b address [-o channel] [-s 250|1|2] [-g]\n" ;
-  const char optlist[] = "i:c:o:a:b:s:g" ;
+  const char usage[] = "Usage: %s -c ce -i irq -a address -b address [-n clientname] [-o channel] [-s 250|1|2] [-g]\n" ;
+  const char optlist[] = "i:c:o:a:b:s:n:g" ;
   int opt = 0 ;
   uint8_t rf24address[ADDR_WIDTH] ;
   uint8_t rf24broadcast[ADDR_WIDTH] ;
   bool baddr = false;
   bool bbroad = false ;
-
+  char szclientid[MAX_MQTT_CLIENTID+1] ;
+  
   struct sigaction siginthandle ;
 
   MqttSnRF24 mqtt ;
@@ -68,7 +70,7 @@ int main(int argc, char **argv)
     fprintf(stderr,"Failed to set signal handler\n") ;
     return EXIT_FAILURE ;
   }
-  
+
   while ((opt = getopt(argc, argv, optlist)) != -1) {
     switch (opt) {
     case 'g': // gateway
@@ -99,6 +101,10 @@ int main(int argc, char **argv)
 	return EXIT_FAILURE ;
       }
       bbroad = true ;
+      break;
+    case 'n': // client name
+      strncpy(szclientid, optarg, MAX_MQTT_CLIENTID) ;
+      opt_cname = 1 ;
       break;
     default: // ? opt
       fprintf(stderr, usage, argv[0]);
@@ -162,20 +168,24 @@ int main(int argc, char **argv)
   mqtt.set_2_byte_crc(true) ;
   mqtt.set_data_rate(opt_speed) ; 
 
+  if (opt_gw){
+    mqtt.set_gateway_id(88) ;
+  }else{
+    if (opt_cname)
+      mqtt.set_client_id(szclientid);
+    else
+      mqtt.set_client_id("CL") ;
+  }
+
   mqtt.initialise(opt_gw?MqttSnRF24::gateway:MqttSnRF24::client, ADDR_WIDTH, rf24broadcast, rf24address) ;
 
   print_state(&mqtt) ;
   
-  if (opt_gw){
-    mqtt.set_gateway_id(88) ;
-  }else{
-    mqtt.set_client_id("CL") ;
-  }
   
   time_t now = time(NULL) ;
   time_t last_search = 0 ;
   const uint16_t search_interval = 5 ; // sec
-  const uint16_t ping_interval = 5 ; // sec
+  const uint16_t ping_interval = 30 ; // sec
   const uint16_t t_retry = 15 ; // sec
   bool ret = false ;
   bool gateway_known = false ;

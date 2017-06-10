@@ -24,6 +24,8 @@
 #define _BV(x) 1 << x
 #endif
 
+#define MAX_GW_TXT 23
+
 #define FLAG_DUP _BV(7)
 #define FLAG_RETAIN _BV(4)
 #define FLAG_WILL _BV(3)
@@ -105,11 +107,17 @@ MqttSnRF24::MqttSnRF24()
 
   m_last_advertised = 0 ;
   m_advertise_interval = 1500 ;
+  m_pmosquitto = NULL ;
+
+  m_mosquitto_initialised = false ;
+  m_broker_connected = false ;
 }
 
 MqttSnRF24::~MqttSnRF24()
 {
-  
+  if (m_mosquitto_initialised){
+    mosquitto_lib_cleanup() ;
+  }
 }
 
 void MqttSnRF24::set_advertise_interval(uint16_t t)
@@ -285,8 +293,10 @@ void MqttSnRF24::received_searchgw(uint8_t *sender_address, uint8_t *data, uint8
   if (m_mqtt_type == gateway){
     // Ignore radius value. This is a gw so respond with
     // a broadcast message back.
-    buff[0] = m_gwid ;
-    queue_response(m_broadcast, MQTT_GWINFO, buff, 1) ;
+    if (m_broker_connected){
+      buff[0] = m_gwid ;
+      queue_response(m_broadcast, MQTT_GWINFO, buff, 1) ;
+    }
   }
 }
 void MqttSnRF24::received_gwinfo(uint8_t *sender_address, uint8_t *data, uint8_t len)
@@ -736,12 +746,49 @@ void MqttSnRF24::initialise(enType type, uint8_t address_len, uint8_t *broadcast
     throw MqttIOErr("Cannot set RX address") ;
   }
 
+  if (m_mqtt_type == gateway){
+    char szgw[MAX_GW_TXT+1];
+    if (!m_mosquitto_initialised) mosquitto_lib_init();
+    m_mosquitto_initialised = true ;
+
+    snprintf(szgw, MAX_GW_TXT, "Gateway %u", m_gwid) ;
+    m_pmosquitto = mosquitto_new(szgw, false, this) ;
+    if (!m_pmosquitto)
+      throw MqttException("Cannot create new mosquitto instance") ;
+
+    int ret = mosquitto_connect_async(m_pmosquitto, "localhost", 1883, 60) ;
+    if (ret != MOSQ_ERR_SUCCESS)
+      throw MqttException ("Cannot connect to broker") ;
+
+    ret = mosquitto_loop_start(m_pmosquitto) ;
+    if (ret != MOSQ_ERR_SUCCESS)
+      throw MqttException ("Cannot start mosquitto loop") ;
+
+    mosquitto_connect_callback_set(m_pmosquitto, gateway_connect_callback) ;
+    mosquitto_disconnect_callback_set(m_pmosquitto, gateway_disconnect_callback);
+  }
+  
   power_up(true) ;
   nano_sleep(0,150000) ; // 150 micro second wait
 
   // Everything is a listener by default
   listen_mode() ;
   
+}
+
+void MqttSnRF24::gateway_disconnect_callback(struct mosquitto *m,
+						    void *data,
+						    int res)
+{
+  ((MqttSnRF24*)data)->m_broker_connected = false ;
+}
+
+void MqttSnRF24::gateway_connect_callback(struct mosquitto *m,
+						 void *data,
+						 int res)
+{
+  // Gateway connected to the broker
+  if (res == 0) ((MqttSnRF24*)data)->m_broker_connected = true ;
 }
 
 void MqttSnRF24::shutdown()
@@ -752,6 +799,17 @@ void MqttSnRF24::shutdown()
 
   // Power down
   power_up(false) ;
+
+  if (m_mqtt_type == gateway){
+    if (m_mosquitto_initialised && m_pmosquitto){
+      mosquitto_disconnect(m_pmosquitto) ;
+      int ret = mosquitto_loop_stop(m_pmosquitto,false) ;
+      if (ret != MOSQ_ERR_SUCCESS)
+	throw MqttException("failed to stop mosquitto loop") ;
+      mosquitto_destroy(m_pmosquitto) ;
+      m_pmosquitto = NULL ;
+    }
+  }
 }
 
 void MqttSnRF24::send_mode()
@@ -887,6 +945,7 @@ bool MqttSnRF24::manage_connections()
 	  p->enabled = false ;
 	  p->connection_complete = false ;
 	  // Attempt to send a disconnect
+	  DPRINT("Disconnecting sleeping client: %s\n", p->szclientid);
 	  writemqtt(p->connect_address, MQTT_DISCONNECT, NULL, 0) ;
 	}
 	else if (p->lost_contact()){
@@ -895,6 +954,7 @@ bool MqttSnRF24::manage_connections()
 	  p->enabled = false ;
 	  p->connection_complete = false ;
 	  // Attempt to send a disconnect
+	  DPRINT("Disconnecting lost client: %s\n", p->szclientid) ;
 	  writemqtt(p->connect_address, MQTT_DISCONNECT, NULL, 0) ;
 	}else if (p->is_connected()){
 	  // Connection should be valid
@@ -903,12 +963,14 @@ bool MqttSnRF24::manage_connections()
 	}
       }
     }    
-    
-    // TO DO. Send Advertise messages
-    if (m_last_advertised+m_advertise_interval < now){
-      DPRINT("Sending Advertised\n") ;
-      advertise(m_advertise_interval) ;
-      m_last_advertised = now ;
+
+    if (m_broker_connected){
+      // Send Advertise messages
+      if (m_last_advertised+m_advertise_interval < now){
+	DPRINT("Sending Advertised\n") ;
+	advertise(m_advertise_interval) ;
+	m_last_advertised = now ;
+      }
     }
   }
   

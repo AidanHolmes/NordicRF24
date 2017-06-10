@@ -34,7 +34,7 @@ $(PINGEXE): $(OBJS_PING) libhw
 	$(CXX) $(LDFLAGS) $(OBJS_PING) $(LIBS) -o $@
 
 $(MQTTEXE): $(OBJS_MQTT) $(OBJS_CMD) libhw
-	$(CXX) $(LDFLAGS) $(OBJS_MQTT) $(OBJS_CMD) $(LIBS) -o $@
+	$(CXX) $(LDFLAGS) $(OBJS_MQTT) $(OBJS_CMD) -lmosquitto $(LIBS) -o $@
 
 $(SENDEXE): $(OBJS_SEND) $(OBJS_CMD) libhw
 	$(CXX) $(LDFLAGS) $(OBJS_SEND) $(OBJS_CMD) $(LIBS) -o $@

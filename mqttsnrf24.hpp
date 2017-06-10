@@ -18,6 +18,7 @@
 #include "bufferedrf24.hpp"
 #include "rpinrf24.hpp"
 #include <time.h>
+#include <mosquitto.h>
 
 #define MAX_QUEUE 50
 #define MAX_GATEWAYS 5
@@ -251,6 +252,15 @@ public:
   void print_gw_table() ;
 
 protected:
+
+  static void gateway_disconnect_callback(struct mosquitto *m,
+					  void *data,
+					  int res);
+
+  static void gateway_connect_callback(struct mosquitto *m,
+				       void *data,
+				       int res);
+
   // send all queued responses
   // returns false if a message cannot be sent.
   // Recommend retrying later if it fails (only applies if using acks on pipes)
@@ -296,7 +306,6 @@ protected:
   uint8_t m_broadcast[MAX_RF24_ADDRESS_LEN];
   uint8_t m_address[MAX_RF24_ADDRESS_LEN];
   char m_szclient_id[MAX_MQTT_CLIENTID+1] ; // Client ID
-  uint8_t m_gwid;
   uint8_t m_address_len ;
   enType m_mqtt_type ;
   MqttGwInfo m_gwinfo[MAX_GATEWAYS] ;
@@ -318,8 +327,12 @@ protected:
   uint8_t m_willtopicqos ;
 
   // Gateway connection attributes
+  struct mosquitto *m_pmosquitto ;
   time_t m_last_advertised ;
   uint16_t m_advertise_interval ;
+  bool m_mosquitto_initialised ;
+  uint8_t m_gwid;
+  bool m_broker_connected ;
 };
 
 
