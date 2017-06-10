@@ -212,6 +212,7 @@ int main(int argc, char **argv)
 	// Known gateway. Check if the gateway is alive and connected
 	if (!mqtt.is_connected(gwhandle) &&
 	    mqtt.connect_expired(t_retry)){
+	  printf("Connected and connect attempt expired\n") ;
 	  mqtt.set_willtopic(L"a/b/c/d", 0) ;
 	  mqtt.set_willmessage(L"Hello World\x00A9") ;
 
@@ -222,6 +223,7 @@ int main(int argc, char **argv)
 	      if (mqtt.connect(gwhandle, true, true, ping_interval))
 		printf("Sending connect to %u\n", gwhandle) ;
 	    }catch (MqttConnectErr &e){
+	      printf("Cannot connect: %s\n", e.what()) ;
 	      gateway_known = false ;
 	    }
 	  }

@@ -111,6 +111,8 @@ MqttSnRF24::MqttSnRF24()
 
   m_mosquitto_initialised = false ;
   m_broker_connected = false ;
+
+  m_connect_start = 0 ;
 }
 
 MqttSnRF24::~MqttSnRF24()
@@ -780,6 +782,7 @@ void MqttSnRF24::gateway_disconnect_callback(struct mosquitto *m,
 						    void *data,
 						    int res)
 {
+  DPRINT("Mosquitto disconnect: %d\n", res) ;
   ((MqttSnRF24*)data)->m_broker_connected = false ;
 }
 
@@ -787,6 +790,7 @@ void MqttSnRF24::gateway_connect_callback(struct mosquitto *m,
 						 void *data,
 						 int res)
 {
+  DPRINT("Mosquitto connect: %d\n", res) ;
   // Gateway connected to the broker
   if (res == 0) ((MqttSnRF24*)data)->m_broker_connected = true ;
 }
