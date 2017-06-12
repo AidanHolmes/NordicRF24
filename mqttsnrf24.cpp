@@ -368,6 +368,7 @@ MqttConnection* MqttSnRF24::search_connection_address(uint8_t *clientaddr)
 {
   MqttConnection *p = NULL ;
   uint8_t a = 0;
+
   for(p = m_connection_head; p != NULL; p=p->next){
     if (p->enabled){
       for (a=0; a < m_address_len; a++){
@@ -393,6 +394,7 @@ MqttConnection* MqttSnRF24::new_connection()
   // p not found, create new connection at the end of the list
   p = new MqttConnection() ;
   p->prev = prev ; // could be null if the first record
+  if (prev) prev->next = p ;
   // Set the head if first record
   if (m_connection_head == NULL) m_connection_head = p ;
 
@@ -433,7 +435,7 @@ void MqttSnRF24::received_connect(uint8_t *sender_address, uint8_t *data, uint8_
 
     MqttConnection *con = search_connection(szClientID) ;
     if (!con){
-      DPRINT("Cannot find an existing connection, creating a new new connection for %s\n", szClientID) ;
+      DPRINT("Cannot find an existing connection, creating a new connection for %s\n", szClientID) ;
       con = new_connection() ;
     }
     if (!con){
@@ -950,7 +952,12 @@ bool MqttSnRF24::manage_connections()
 	  p->connection_complete = false ;
 	  // Attempt to send a disconnect
 	  DPRINT("Disconnecting sleeping client: %s\n", p->szclientid);
-	  writemqtt(p->connect_address, MQTT_DISCONNECT, NULL, 0) ;
+	  try{
+	    writemqtt(p->connect_address, MQTT_DISCONNECT, NULL, 0) ;
+
+	  }catch (BuffMaxRetry &e){
+	    // meh
+	  }
 	}
 	else if (p->lost_contact()){
 	  // Client is not a sleeping client and is also
@@ -959,7 +966,11 @@ bool MqttSnRF24::manage_connections()
 	  p->connection_complete = false ;
 	  // Attempt to send a disconnect
 	  DPRINT("Disconnecting lost client: %s\n", p->szclientid) ;
-	  writemqtt(p->connect_address, MQTT_DISCONNECT, NULL, 0) ;
+	  try{
+	    writemqtt(p->connect_address, MQTT_DISCONNECT, NULL, 0) ;
+	  }catch(BuffMaxRetry &e){
+	    // meh
+	  }
 	}else if (p->is_connected()){
 	  // Connection should be valid
 	  if (p->send_another_ping())
@@ -1113,11 +1124,14 @@ bool MqttSnRF24::ping(uint8_t gwid)
   MqttGwInfo *gw = get_gateway(gwid) ;
   if (!gw) return false ; // no gateway known
 
+  // Record when the ping was attempted, note that this doesn't care
+  // if it worked
+  if (m_client_connection.gwid == gwid)
+    m_client_connection.last_ping = time(NULL) ;
+  
   for(uint16_t retry = 0;retry < m_max_retries+1;retry++){
     try{
       writemqtt(gw->address, MQTT_PINGREQ, (uint8_t *)m_szclient_id, clientid_len) ;
-      if (m_client_connection.gwid == gwid)
-	m_client_connection.last_ping = time(NULL) ;
       return true ;
     }catch(BuffMaxRetry &e){
       // Do nothing, continue in for loop
@@ -1131,10 +1145,13 @@ bool MqttSnRF24::ping(char *szclientid)
   MqttConnection *con = search_connection(szclientid) ;
   if (!con) return false ; // cannot ping unknown client
 
+  // Record when the ping was attempted, note that this doesn't care
+  // if it worked
+  con->last_ping = time(NULL) ;
+
   for(uint16_t retry = 0;retry < m_max_retries+1;retry++){
     try{
       writemqtt(con->connect_address, MQTT_PINGREQ, NULL, 0) ;
-      con->last_ping = time(NULL) ;
       return true ;
     }catch(BuffMaxRetry &e){
       // Do nothing, continue in for loop

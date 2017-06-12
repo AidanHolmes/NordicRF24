@@ -32,7 +32,8 @@ int opt_irq = 0,
   opt_gw = 0,
   opt_channel = 0,
   opt_cname = 0,
-  opt_speed = 1;
+  opt_speed = 1,
+  opt_ack = 0;
 
 void siginterrupt(int sig)
 {
@@ -47,8 +48,8 @@ void siginterrupt(int sig)
 
 int main(int argc, char **argv)
 {
-  const char usage[] = "Usage: %s -c ce -i irq -a address -b address [-n clientname] [-o channel] [-s 250|1|2] [-g]\n" ;
-  const char optlist[] = "i:c:o:a:b:s:n:g" ;
+  const char usage[] = "Usage: %s -c ce -i irq -a address -b address [-n clientname] [-o channel] [-s 250|1|2] [-x] [-g]\n" ;
+  const char optlist[] = "i:c:o:a:b:s:n:gx" ;
   int opt = 0 ;
   uint8_t rf24address[ADDR_WIDTH] ;
   uint8_t rf24broadcast[ADDR_WIDTH] ;
@@ -73,6 +74,9 @@ int main(int argc, char **argv)
 
   while ((opt = getopt(argc, argv, optlist)) != -1) {
     switch (opt) {
+    case 'x': //ack
+      opt_ack = 1 ;
+      break ;
     case 'g': // gateway
       opt_gw = 1;
       break;
@@ -161,8 +165,8 @@ int main(int argc, char **argv)
   // Link layer specific options
   mqtt.set_retry(15,15);
   mqtt.set_channel(opt_channel) ; // 2.400GHz + channel MHz
-  mqtt.set_pipe_ack(0,false) ; // Turn off ACKs
-  mqtt.set_pipe_ack(1,false) ;  // No ACK for this pipe
+  mqtt.set_pipe_ack(0,opt_ack) ; // Turn off/on ACKs
+  mqtt.set_pipe_ack(1,opt_ack) ;  // On/Off ACK for this pipe
   mqtt.set_power_level(RF24_0DBM) ;
   mqtt.crc_enabled(true) ;
   mqtt.set_2_byte_crc(true) ;
