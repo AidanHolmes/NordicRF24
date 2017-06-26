@@ -25,8 +25,8 @@
 #define MAX_MQTT_CLIENTID 21
 #define MQTT_PAYLOAD_WIDTH 32
 #define MQTT_PROTOCOL 0x01
-#define MQTT_TOPIC_SAFE_BYTES 24
-#define MQTT_TOPIC_MAX_BYTES 26
+#define MQTT_TOPIC_SAFE_BYTES 21
+#define MQTT_TOPIC_MAX_BYTES 23
 #define MQTT_MESSAGE_SAFE_BYTES 25
 #define MQTT_MESSAGE_MAX_BYTES 27
 
@@ -74,9 +74,49 @@ public:
   uint8_t message_len ;
 };
 
+class MqttTopic{
+public:
+  MqttTopic(){reset();}
+  MqttTopic(uint16_t topic, uint16_t mid, char *sztopic){reset();set_topic(topic, mid, sztopic);}
+  // Clients will set the messageid, servers need to set from REGISTER
+  // requested value.
+  void set_topic(uint16_t topic, uint16_t messageid, char *sztopic){
+    m_topicid = topic ;
+    strncpy(m_sztopic, sztopic, MQTT_TOPIC_MAX_BYTES) ;
+    m_messageid = messageid ;
+  }
+  void reset(){
+    m_next = NULL;
+    m_prev = NULL;
+    m_sztopic[0] = '\0' ;
+    m_topicid = 0;
+    m_messageid = 0;
+    m_acknowledged = false ;
+  }
+  bool is_head(){return !m_prev;}
+  uint16_t get_id(){return m_topicid;}
+  uint16_t get_message_id(){return m_messageid;}
+  char *get_topic(){return m_sztopic;}
+  MqttTopic *next(){return m_next;}
+  MqttTopic *prev(){return m_prev;}
+  bool is_complete(){return m_acknowledged;}
+  void complete(){m_acknowledged = true ;}
+  void unlink(){if (!is_head())m_prev->m_next = m_next;}
+  void link_head(MqttTopic *topic){if (m_prev)m_prev->m_next = topic;m_prev = topic;} // adds topic ahead
+  void link_tail(MqttTopic *topic){if (m_next)m_next->m_prev = topic;m_next = topic;} // adds topic after
+protected:
+  MqttTopic *m_next ;
+  MqttTopic *m_prev ;
+  char m_sztopic[MQTT_TOPIC_MAX_BYTES+1];
+  uint16_t m_topicid ;
+  uint16_t m_messageid ; // used by clients
+  bool m_acknowledged ;
+};
+
 class MqttConnection{
 public:
   MqttConnection(){
+    topics = NULL ;
     next = NULL ;
     prev = NULL ;
     prompt_will_topic = false ;
@@ -90,7 +130,15 @@ public:
     sleep_duration = 0 ;
     asleep_from = 0 ;
     last_ping =0;
+    messageid = 0;
   }
+  // Client connection will register that it is creating a topic
+  uint16_t reg_topic(char *sztopic, uint16_t messageid) ;
+  // Server adds the topic
+  uint16_t add_topic(char *sztopic, uint16_t messageid=0) ;
+  bool complete_topic(uint16_t messageid) ;
+  bool del_topic(uint16_t id) ;
+  void free_topics() ; // delete all topics and free mem
   void update_activity(){ // received activity from client or server
     lastactivity = time(NULL) ;
   }
@@ -100,17 +148,23 @@ public:
   bool is_asleep(){
     return (time(NULL) < asleep_from+sleep_duration) ;
   }
+
   bool is_connected(){
     // Ignoring timers, does this connection think it's connected?
     return (enabled &&
 	    !disconnected &&
 	    connection_complete) ;
   }
+
+  // Not thread protected!
+  uint16_t get_new_messageid(){if(messageid == 0xFFFF)messageid=0;return ++messageid;}
+  
   bool lost_contact(){
     // Give 5 retries before failing. This mutliplies the time assuming that
     // all pings will be sent timely
     return ((lastactivity + (duration * 5)) < time(NULL)) ;
   }
+  MqttTopic *topics ;
   MqttConnection *next; // linked list of connections (gw only)
   MqttConnection *prev ; // linked list of connections (gw only)
   bool enabled ; // This record is valid
@@ -126,6 +180,7 @@ public:
   time_t asleep_from ;
   uint16_t sleep_duration ;
   time_t last_ping ;
+  uint16_t messageid ;
 };
 
 class MqttGwInfo{
@@ -175,7 +230,8 @@ public:
   ~MqttSnRF24() ;
 
   enum enType {client, gateway, forwarder} ;
-
+  size_t wchar_to_utf8(const wchar_t *wstr, char *outstr, const size_t maxbytes) ;
+  
   //////////////////////////////////////
   // Setup
   
@@ -236,6 +292,10 @@ public:
   // Ping for use by a client to check a gateway is alive
   // Returns false if gateway is unknown or transmit failed (with ACK)
   bool ping(uint8_t gw);
+
+  // Register a topic with the server. Returns the topic id to use
+  // when publishing messages. Returns 0 if the register fails.
+  uint16_t register_topic(const wchar_t *topic) ;
   
   // Handles connections to gateways or to clients. Dispatches queued messages
   // Will return false if a queued message cannot be dispatched.
@@ -279,6 +339,7 @@ protected:
   void received_pingresp(uint8_t *sender_address, uint8_t *data, uint8_t len) ;
   void received_pingreq(uint8_t *sender_address, uint8_t *data, uint8_t len) ;
   void received_disconnect(uint8_t *sender_address, uint8_t *data, uint8_t len) ;
+  void received_register(uint8_t *sender_address, uint8_t *data, uint8_t len) ;
 
   MqttGwInfo* get_gateway(uint8_t gwid);
   MqttGwInfo* get_gateway_address(uint8_t *gwaddress) ;

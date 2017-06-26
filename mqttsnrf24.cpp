@@ -209,6 +209,9 @@ bool MqttSnRF24::data_received_interrupt()
       case MQTT_DISCONNECT:
 	received_disconnect(sender_addr, mqtt_payload, length) ;
 	break;
+      case MQTT_REGISTER:
+	received_register(sender_addr, mqtt_payload, length) ;
+	break;
 	//default:
 	// Not expected message.
 	// This is not a 1.2 MQTT message
@@ -218,6 +221,20 @@ bool MqttSnRF24::data_received_interrupt()
   
   return true ;
 }
+void MqttSnRF24::received_register(uint8_t *sender_address, uint8_t *data, uint8_t len)
+{
+  uint16_t topicid = (data[0] << 8) | data[1] ; // Assuming MSB is first
+  uint16_t messageid = (data[2] << 8) | data[3] ; // Assuming MSB is first
+  char sztopic[MQTT_TOPIC_MAX_BYTES+1] ;
+  memcpy(sztopic, data+4, len-4) ;
+  sztopic[len-4] = '\0';
+
+  DPRINT("REGISTER {topicid: %u, messageid: %u, topic %s\n", topicid, messageid, sztopic) ;
+  if (m_mqtt_type == gateway){
+    
+  }
+}
+
 void MqttSnRF24::received_pingresp(uint8_t *sender_address, uint8_t *data, uint8_t len)
 {
   DPRINT("PINGRESP\n") ;
@@ -1085,6 +1102,110 @@ void MqttSnRF24::writemqtt(uint8_t *address,
   listen_mode() ;
 }
 
+uint16_t MqttConnection::reg_topic(char *sztopic, uint16_t messageid)
+{
+  MqttTopic *p = NULL, *insert_at = NULL ;
+  if (!topics){
+    // No topics in connection.
+    // Create the head topic. No index set
+    topics = new MqttTopic(0, messageid, sztopic) ;
+    return 0;
+  }
+  for (p = topics; p; p = p->next()){
+    if (strcmp(p->get_topic(), sztopic) == 0){
+      // topic exists
+      DPRINT("Topic %s already exists for connection\n", sztopic) ;
+      return p->get_id() ;
+    }
+    // Add 1 to be unique
+    insert_at = p ; // Save last valid topic pointer
+  }
+
+  insert_at->link_tail(new MqttTopic(0, messageid, sztopic)) ;
+  return 0 ;
+}
+
+bool MqttConnection::complete_topic(uint16_t messageid)
+{
+  MqttTopic *p = NULL ;
+  if (!topics) return false ; // no topics
+  for (p = topics; p; p = p->next()){
+    if (p->get_message_id() == messageid && !p->is_complete()){
+      p->complete() ;
+      return true ;
+    }
+  }
+  // Cannot find an incomplete topic that needs completing
+  return false ;
+}
+
+uint16_t MqttConnection::add_topic(char *sztopic, uint16_t messageid)
+{
+  MqttTopic *p = NULL, *insert_at = NULL ;
+  uint16_t available_id = 0 ;
+  if (!topics){
+    // No topics in connection.
+    // Create the head topic. Always index 1
+    topics = new MqttTopic(1, messageid, sztopic) ;
+    return 1;
+  }
+  for (p = topics; p; p = p->next()){
+    if (strcmp(p->get_topic(), sztopic) == 0){
+      // topic exists
+      DPRINT("Topic %s already exists for connection\n", sztopic) ;
+      return p->get_id() ;
+    }
+    // Add 1 to be unique
+    if (p->get_id() > available_id) available_id = p->get_id() + 1 ;
+    insert_at = p ; // Save last valid topic pointer
+  }
+  // If connection was to run a long time with creation and deletion of topics then
+  // the ID count will overflow! Overflows in 18 hours if requested every second
+  // TO DO: Better implementation of ID assignment and improved data structure
+  p = new MqttTopic(available_id, messageid, sztopic) ;
+  p->complete() ; // server completes the topic
+  insert_at->link_tail(p);
+  return available_id ;
+}
+
+bool MqttConnection::del_topic(uint16_t id)
+{
+  MqttTopic *p = NULL ;
+  for (p=topics;p;p = p->next()){
+    if (p->get_id() == id){
+      if (p->is_head()){
+	topics = p->next() ;
+      }else{
+	p->unlink() ;
+      }
+      delete p ;
+      return true ;
+    }
+  }
+  return false ;
+}
+
+void MqttConnection::free_topics()
+{
+  MqttTopic *p = topics,*delme = NULL ;
+
+  while(p){
+    // Cannot unlink the head
+    if (!p->is_head()){
+      p->unlink() ;
+      delme = p;
+      p = p->next() ;
+      delete delme ;
+    }else{
+      p = p->next() ;
+    }
+  }
+  if (topics){
+    delete topics ;
+    topics = NULL ;
+  }
+}
+
 bool MqttSnRF24::searchgw(uint8_t radius)
 {
   uint8_t buff[1] ;
@@ -1115,6 +1236,66 @@ bool MqttSnRF24::advertise(uint16_t duration)
     }
   }
   return false ;
+}
+
+uint16_t MqttSnRF24::register_topic(const wchar_t *topic)
+{
+  char sztopic[MQTT_TOPIC_MAX_BYTES] ;
+  uint8_t buff[4 + MQTT_TOPIC_MAX_BYTES] ;
+  size_t len = 0 ;
+  
+  try{
+    len = wchar_to_utf8(topic, sztopic, (unsigned)(MQTT_TOPIC_SAFE_BYTES + (MAX_RF24_ADDRESS_LEN - m_address_len)));
+  }catch(MqttOutOfRange &e){
+    DPRINT("Throwing exception - cannot convert REGISTER topic to UTF-8\n") ;
+    throw ;
+  }
+
+  if (m_client_connection.is_connected()){
+    pthread_mutex_lock(&m_rwlock) ;
+    uint16_t mid = m_client_connection.get_new_messageid() ;
+    pthread_mutex_unlock(&m_rwlock) ;
+    buff[0] = 0 ;
+    buff[1] = 0 ; // topic ID set to zero
+    buff[2] = mid >> 8 ; // MSB
+    buff[3] = mid & 0x00FF;
+    memcpy(buff+4, sztopic, len) ;
+    for(uint16_t retry = 0;retry < m_max_retries+1;retry++){
+      try{
+	writemqtt(m_client_connection.connect_address, MQTT_REGISTER, buff, 4+len) ;
+	// add the topic to the client connection
+	m_client_connection.reg_topic(sztopic, mid) ;
+	return true ;
+      }catch(BuffMaxRetry &e){
+	// Do nothing, continue in for loop
+      }
+    }
+  }
+  // Connection timed out or not connected
+  return false ;
+}
+
+size_t MqttSnRF24::wchar_to_utf8(const wchar_t *wstr, char *outstr, const size_t maxbytes)
+{
+  size_t len = wcslen(wstr) ;
+  if (len > maxbytes)
+    throw MqttOutOfRange("conversion to utf8 too long") ;
+
+  char *curlocale = setlocale(LC_CTYPE, NULL);
+  
+  if (!setlocale(LC_CTYPE, "en_GB.UTF-8")){
+    throw MqttOutOfRange("cannot set UTF locale") ;
+  }
+    
+  size_t ret = wcstombs(outstr, wstr, maxbytes) ;
+
+  setlocale(LC_CTYPE, curlocale) ; // reset locale
+
+  if (ret < 0){
+    throw MqttOutOfRange("failed to convert wide string to utf8") ;
+  }
+  
+  return ret ;
 }
 
 bool MqttSnRF24::ping(uint8_t gwid)
@@ -1318,10 +1499,19 @@ void MqttSnRF24::set_willtopic(const wchar_t *topic, uint8_t qos)
   if (len > (unsigned)(MQTT_TOPIC_SAFE_BYTES + (MAX_RF24_ADDRESS_LEN - m_address_len))){
     throw MqttOutOfRange("topic too long for payload") ;
   }
+
+  char *curlocale = setlocale(LC_CTYPE, NULL);
+  
+  if (!setlocale(LC_CTYPE, "en_GB.UTF-8")){
+    throw MqttOutOfRange("cannot set UTF locale") ;
+  }
   
   size_t ret = wcstombs(m_willtopic, topic, (MQTT_TOPIC_SAFE_BYTES + (MAX_RF24_ADDRESS_LEN - m_address_len))) ;
 
+  setlocale(LC_CTYPE, curlocale) ; // reset locale
+
   if (ret < 0) throw MqttOutOfRange("topic string conversion error") ;
+
 
   m_willtopicsize = ret ;
   m_willtopicqos = qos ;
