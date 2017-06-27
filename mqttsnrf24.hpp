@@ -100,7 +100,7 @@ public:
   MqttTopic *next(){return m_next;}
   MqttTopic *prev(){return m_prev;}
   bool is_complete(){return m_acknowledged;}
-  void complete(){m_acknowledged = true ;}
+  void complete(uint16_t tid){m_acknowledged = true ;m_topicid=tid;}
   void unlink(){if (!is_head())m_prev->m_next = m_next;}
   void link_head(MqttTopic *topic){if (m_prev)m_prev->m_next = topic;m_prev = topic;} // adds topic ahead
   void link_tail(MqttTopic *topic){if (m_next)m_next->m_prev = topic;m_next = topic;} // adds topic after
@@ -133,11 +133,16 @@ public:
     messageid = 0;
   }
   // Client connection will register that it is creating a topic
+  // Needs to be formally added with a complete_topic call
   uint16_t reg_topic(char *sztopic, uint16_t messageid) ;
-  // Server adds the topic
+  // Server adds the topic. a call to complete_topic is not required when a
+  // server adds a topic.
+  // Will return a new Topic ID or if the topic already exists, the existing Topic ID
   uint16_t add_topic(char *sztopic, uint16_t messageid=0) ;
-  bool complete_topic(uint16_t messageid) ;
+  // Client call to complete topic and update topicid. Returns false if not found
+  bool complete_topic(uint16_t messageid, uint16_t topicid) ;
   bool del_topic(uint16_t id) ;
+  bool del_topic_by_messageid(uint16_t messageid) ;
   void free_topics() ; // delete all topics and free mem
   void update_activity(){ // received activity from client or server
     lastactivity = time(NULL) ;
@@ -340,6 +345,7 @@ protected:
   void received_pingreq(uint8_t *sender_address, uint8_t *data, uint8_t len) ;
   void received_disconnect(uint8_t *sender_address, uint8_t *data, uint8_t len) ;
   void received_register(uint8_t *sender_address, uint8_t *data, uint8_t len) ;
+  void received_regack(uint8_t *sender_address, uint8_t *data, uint8_t len) ;
 
   MqttGwInfo* get_gateway(uint8_t gwid);
   MqttGwInfo* get_gateway_address(uint8_t *gwaddress) ;

@@ -212,6 +212,9 @@ bool MqttSnRF24::data_received_interrupt()
       case MQTT_REGISTER:
 	received_register(sender_addr, mqtt_payload, length) ;
 	break;
+      case MQTT_REGACK:
+	received_regack(sender_addr, mqtt_payload, length) ;
+	break;
 	//default:
 	// Not expected message.
 	// This is not a 1.2 MQTT message
@@ -223,6 +226,7 @@ bool MqttSnRF24::data_received_interrupt()
 }
 void MqttSnRF24::received_register(uint8_t *sender_address, uint8_t *data, uint8_t len)
 {
+  if (len < 4) return ;
   uint16_t topicid = (data[0] << 8) | data[1] ; // Assuming MSB is first
   uint16_t messageid = (data[2] << 8) | data[3] ; // Assuming MSB is first
   char sztopic[MQTT_TOPIC_MAX_BYTES+1] ;
@@ -231,7 +235,59 @@ void MqttSnRF24::received_register(uint8_t *sender_address, uint8_t *data, uint8
 
   DPRINT("REGISTER {topicid: %u, messageid: %u, topic %s\n", topicid, messageid, sztopic) ;
   if (m_mqtt_type == gateway){
+    pthread_mutex_lock(&m_rwlock) ;
+    MqttConnection *con = search_connection_address(sender_address) ;
+    if (!con){
+      DPRINT("REGISTER - Cannnot find a connection for the client\n") ;
+      pthread_mutex_unlock(&m_rwlock) ;
+      return ;
+    }
+    uint16_t topicid = con->add_topic(sztopic, messageid) ;
+    uint8_t response[5] ;
+    response[0] = topicid >> 8 ; // Write topicid MSB first
+    response[1] = topicid & 0x00FF ;
+    response[2] = data[2] ; // Echo back the messageid received
+    response[3] = data[3] ; // Echo back the messageid received
+    response[4] = MQTT_RETURN_ACCEPTED ;
+    queue_response(sender_address, MQTT_REGACK, response, 5) ;
+    pthread_mutex_unlock(&m_rwlock) ;
+  }
+}
+
+void MqttSnRF24::received_regack(uint8_t *sender_address, uint8_t *data, uint8_t len)
+{
+  if (len != 5) return ;
+  
+  uint16_t topicid = (data[0] << 8) | data[1] ; // Assuming MSB is first
+  uint16_t messageid = (data[2] << 8) | data[3] ; // Assuming MSB is first
+  uint8_t returncode = data[5] ;
+
+  DPRINT("REGACK: {topicid = %u, messageid = %u, returncode = %u}\n", topicid, messageid, returncode) ;
+  if (m_mqtt_type == client){
     
+    switch(returncode){
+    case MQTT_RETURN_ACCEPTED:
+      DPRINT("REGACK: {return code = Accepted}\n") ;
+      if (!m_client_connection.complete_topic(messageid, topicid)){
+	DPRINT("Cannnot complete topic %u with messageid %u\n", topicid, messageid) ;
+      }
+      break ;
+    case MQTT_RETURN_CONGESTION:
+      DPRINT("REGACK: {return code = Congestion}\n") ;
+      m_client_connection.del_topic_by_messageid(messageid) ;
+      break ;
+    case MQTT_RETURN_INVALID_TOPIC:
+      DPRINT("REGACK: {return code = Invalid Topic}\n") ;
+      m_client_connection.del_topic_by_messageid(messageid) ;
+      break ;
+    case MQTT_RETURN_NOT_SUPPORTED:
+      DPRINT("REGACK: {return code = Not Supported}\n") ;
+      m_client_connection.del_topic_by_messageid(messageid) ;
+      break ;
+    default:
+      DPRINT("REGACK: {return code = %u}\n", returncode) ;
+      m_client_connection.del_topic_by_messageid(messageid) ;
+    }
   }
 }
 
@@ -1125,13 +1181,13 @@ uint16_t MqttConnection::reg_topic(char *sztopic, uint16_t messageid)
   return 0 ;
 }
 
-bool MqttConnection::complete_topic(uint16_t messageid)
+bool MqttConnection::complete_topic(uint16_t messageid, uint16_t topicid)
 {
   MqttTopic *p = NULL ;
   if (!topics) return false ; // no topics
   for (p = topics; p; p = p->next()){
     if (p->get_message_id() == messageid && !p->is_complete()){
-      p->complete() ;
+      p->complete(topicid) ;
       return true ;
     }
   }
@@ -1163,9 +1219,26 @@ uint16_t MqttConnection::add_topic(char *sztopic, uint16_t messageid)
   // the ID count will overflow! Overflows in 18 hours if requested every second
   // TO DO: Better implementation of ID assignment and improved data structure
   p = new MqttTopic(available_id, messageid, sztopic) ;
-  p->complete() ; // server completes the topic
+  p->complete(available_id) ; // server completes the topic
   insert_at->link_tail(p);
   return available_id ;
+}
+
+bool MqttConnection::del_topic_by_messageid(uint16_t messageid)
+{
+  MqttTopic *p = NULL ;
+  for (p=topics;p;p = p->next()){
+    if (p->get_message_id() == messageid){
+      if (p->is_head()){
+	topics = p->next() ;
+      }else{
+	p->unlink() ;
+      }
+      delete p ;
+      return true ;
+    }
+  }
+  return false ;
 }
 
 bool MqttConnection::del_topic(uint16_t id)

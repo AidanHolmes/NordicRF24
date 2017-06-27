@@ -187,7 +187,7 @@ int main(int argc, char **argv)
   
   
   time_t now = time(NULL) ;
-  time_t last_search = 0 ;
+  time_t last_search = 0, last_register = 0 ;
   const uint16_t search_interval = 5 ; // sec
   const uint16_t ping_interval = 30 ; // sec
   const uint16_t t_retry = 15 ; // sec
@@ -231,14 +231,11 @@ int main(int argc, char **argv)
 	      gateway_known = false ;
 	    }
 	  }
+	}else{ // Connected
+	  if (last_register+10 < now){
+	    mqtt.register_topic(L"IT/IS/A/baby") ;
+	  }
 	}
-
-	// Has the gateway been responsive?
-	// This may compliment the question; is the connection up and
-	// is the gateway responding?
-	//if (mqtt.is_gateway_valid(gwhandle)){
-	//  gateway_known = false ;
-	//}
       }
     }
     mqtt.manage_connections() ;
