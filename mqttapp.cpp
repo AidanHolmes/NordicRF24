@@ -234,6 +234,7 @@ int main(int argc, char **argv)
 	}else{ // Connected
 	  if (last_register+10 < now){
 	    mqtt.register_topic(L"IT/IS/A/baby") ;
+	    last_register = now ;
 	  }
 	}
       }

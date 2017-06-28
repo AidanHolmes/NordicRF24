@@ -84,6 +84,7 @@ public:
     m_topicid = topic ;
     strncpy(m_sztopic, sztopic, MQTT_TOPIC_MAX_BYTES) ;
     m_messageid = messageid ;
+    m_registered_at = time(NULL) ;
   }
   void reset(){
     m_next = NULL;
@@ -92,7 +93,10 @@ public:
     m_topicid = 0;
     m_messageid = 0;
     m_acknowledged = false ;
+    m_registered_at = 0 ;
+    m_timeout = 5 ;
   }
+  bool registration_expired(){return (m_registered_at + m_timeout) < time(NULL);}
   bool is_head(){return !m_prev;}
   uint16_t get_id(){return m_topicid;}
   uint16_t get_message_id(){return m_messageid;}
@@ -111,6 +115,8 @@ protected:
   uint16_t m_topicid ;
   uint16_t m_messageid ; // used by clients
   bool m_acknowledged ;
+  time_t m_registered_at ;
+  uint16_t m_timeout ;
 };
 
 class MqttConnection{

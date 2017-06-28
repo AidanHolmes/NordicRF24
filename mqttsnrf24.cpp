@@ -233,7 +233,7 @@ void MqttSnRF24::received_register(uint8_t *sender_address, uint8_t *data, uint8
   memcpy(sztopic, data+4, len-4) ;
   sztopic[len-4] = '\0';
 
-  DPRINT("REGISTER {topicid: %u, messageid: %u, topic %s\n", topicid, messageid, sztopic) ;
+  DPRINT("REGISTER {topicid: %u, messageid: %u, topic %s}\n", topicid, messageid, sztopic) ;
   if (m_mqtt_type == gateway){
     pthread_mutex_lock(&m_rwlock) ;
     MqttConnection *con = search_connection_address(sender_address) ;
@@ -765,6 +765,7 @@ void MqttSnRF24::received_disconnect(uint8_t *sender_address, uint8_t *data, uin
     DPRINT("DISCONNECT\n") ;
     m_client_connection.enabled = false;
     m_client_connection.connection_complete = false ;
+    m_client_connection.free_topics() ;
   }
   
 }
@@ -1316,6 +1317,7 @@ uint16_t MqttSnRF24::register_topic(const wchar_t *topic)
   char sztopic[MQTT_TOPIC_MAX_BYTES] ;
   uint8_t buff[4 + MQTT_TOPIC_MAX_BYTES] ;
   size_t len = 0 ;
+  uint16_t ret = 0 ;
   
   try{
     len = wchar_to_utf8(topic, sztopic, (unsigned)(MQTT_TOPIC_SAFE_BYTES + (MAX_RF24_ADDRESS_LEN - m_address_len)));
@@ -1327,17 +1329,21 @@ uint16_t MqttSnRF24::register_topic(const wchar_t *topic)
   if (m_client_connection.is_connected()){
     pthread_mutex_lock(&m_rwlock) ;
     uint16_t mid = m_client_connection.get_new_messageid() ;
+    // Register the topic
+    if ((ret = m_client_connection.reg_topic(sztopic, mid)) > 0)
+      return ret ; // already exists
+
     pthread_mutex_unlock(&m_rwlock) ;
     buff[0] = 0 ;
     buff[1] = 0 ; // topic ID set to zero
     buff[2] = mid >> 8 ; // MSB
     buff[3] = mid & 0x00FF;
     memcpy(buff+4, sztopic, len) ;
+    
     for(uint16_t retry = 0;retry < m_max_retries+1;retry++){
       try{
 	writemqtt(m_client_connection.connect_address, MQTT_REGISTER, buff, 4+len) ;
 	// add the topic to the client connection
-	m_client_connection.reg_topic(sztopic, mid) ;
 	return true ;
       }catch(BuffMaxRetry &e){
 	// Do nothing, continue in for loop
@@ -1345,7 +1351,7 @@ uint16_t MqttSnRF24::register_topic(const wchar_t *topic)
     }
   }
   // Connection timed out or not connected
-  return false ;
+  return 0 ;
 }
 
 size_t MqttSnRF24::wchar_to_utf8(const wchar_t *wstr, char *outstr, const size_t maxbytes)
