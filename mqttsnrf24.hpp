@@ -362,17 +362,17 @@ protected:
   MqttConnection* new_connection();
   void delete_connection(char *szclientid);
   
-  // Queue the data responses until dispatch is called.
+  // Queue the data received until dispatch is called.
   // Overwrites old queue messages without error if not dispacted quickly
-  // Use as alternative to writemqtt for responses from interrupt calls
-  void queue_response(uint8_t *addr,
+  void queue_received(uint8_t *addr,
 		      uint8_t messageid,
 		      uint8_t *data,
 		      uint8_t len) ;
     
   // Creates header and body. Writes to address
-  // Throws BuffMaxRetry, MqttIOErr or MqttOutOfRange exceptions
-  void writemqtt(uint8_t *address, uint8_t messageid, uint8_t *buff, uint8_t len);
+  // Throws MqttIOErr or MqttOutOfRange exceptions
+  // Returns false if connection failed max retries
+  bool writemqtt(uint8_t *address, uint8_t messageid, uint8_t *buff, uint8_t len);
   void listen_mode() ;
   void send_mode() ;
   
