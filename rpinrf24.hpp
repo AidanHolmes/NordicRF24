@@ -186,7 +186,7 @@ public:
   // RX Address registers
   // pipe & address is read-only, len is read/write
   // Fails if len is too short or IO error
-  bool set_rx_address(uint8_t pipe, uint8_t *address, uint8_t len);
+  bool set_rx_address(uint8_t pipe, const uint8_t *address, uint8_t len);
 
   // pipe is read-only, address and len are read/write. If address is NULL
   // then only len is updated to address width
@@ -195,7 +195,7 @@ public:
   // TX Address register
   // Sets transmit address.
   // Fails if len is too short or IO error
-  bool set_tx_address(uint8_t *address, uint8_t len) ;
+  bool set_tx_address(const uint8_t *address, uint8_t len) ;
   
   // Gets the transmit address. Len must reflect the length of the address buffer and be long enough
   // to write the address buffer, else false is returned.
@@ -248,7 +248,7 @@ public:
 protected:
   void reset_class() ;
   bool read_register(uint8_t addr, uint8_t *val, uint8_t len);
-  bool write_register(uint8_t addr, uint8_t *val, uint8_t len);
+  bool write_register(uint8_t addr, const uint8_t *val, uint8_t len);
   bool enable_features(bool enable) ; // Should this be public?
   void convert_status(uint8_t status) ;
   static void interrupt() ;

@@ -2,7 +2,7 @@ DEBUG=-DDEBUG
 HWLIBS = ../hardware
 CXX = g++
 CC = g++
-CXXFLAGS= -Wall -I$(HWLIBS) -L$(HWLIBS) $(DEBUG) -g
+CXXFLAGS= -std=c++11 -Wall -I$(HWLIBS) -L$(HWLIBS) $(DEBUG) -g
 CFLAGS = $(CXXFLAGS)
 LIBS = -lwiringPi -lpihw -lpthread
 LDFLAGS = -I$(HWLIBS) -L$(HWLIBS)

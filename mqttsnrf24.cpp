@@ -211,11 +211,13 @@ void MqttSnRF24::received_regack(uint8_t *sender_address, uint8_t *data, uint8_t
   
   uint16_t topicid = (data[0] << 8) | data[1] ; // Assuming MSB is first
   uint16_t messageid = (data[2] << 8) | data[3] ; // Assuming MSB is first
-  uint8_t returncode = data[5] ;
+  uint8_t returncode = data[4] ;
 
   DPRINT("REGACK: {topicid = %u, messageid = %u, returncode = %u}\n", topicid, messageid, returncode) ;
   if (m_mqtt_type == client){
-    
+    // not for this client if the connection address is different
+    if (!m_client_connection.address_match(sender_address)) return ; 
+    m_client_connection.update_activity() ;
     switch(returncode){
     case MQTT_RETURN_ACCEPTED:
       DPRINT("REGACK: {return code = Accepted}\n") ;
@@ -250,14 +252,14 @@ void MqttSnRF24::received_pingresp(uint8_t *sender_address, uint8_t *data, uint8
     MqttConnection *con = search_connection_address(sender_address) ;
     if (con){
       // just update the last activity timestamp
-      con->lastactivity = time(NULL) ;
+      con->update_activity() ;
     }
   }else if (m_mqtt_type == client){
     MqttGwInfo *gw = get_gateway_address(sender_address);
     if (gw){
       gw->update_activity() ;
     }
-    if (gw->gw_id == m_client_connection.gwid){
+    if (gw->gw_id == m_client_connection.get_gwid()){
       // Ping received from connected gateway
       m_client_connection.update_activity() ;
     }
@@ -305,6 +307,11 @@ void MqttSnRF24::received_advertised(uint8_t *sender_address, uint8_t *data, uin
 	break ;
       }
     }
+    if (m_client_connection.is_connected() &&
+	m_client_connection.get_gwid() == data[0]){
+      m_client_connection.update_activity() ;
+    }
+	
     pthread_mutex_unlock(&m_rwlock) ;
   }
 }
@@ -377,28 +384,45 @@ void MqttSnRF24::received_gwinfo(uint8_t *sender_address, uint8_t *data, uint8_t
   }
 }
 
-MqttConnection* MqttSnRF24::search_connection(char *szclientid)
+MqttConnection* MqttSnRF24::search_connection(const char *szclientid)
 {
   MqttConnection *p = NULL ;
   for(p = m_connection_head; p != NULL; p=p->next){
-    if (p->enabled){
-      if (strcmp(p->szclientid, szclientid) == 0) break ;
+    if (!p->is_disconnected()){
+      if (p->client_id_match(szclientid)) break ;
     }
   }
   return p ;
 }
 
-MqttConnection* MqttSnRF24::search_connection_address(uint8_t *clientaddr)
+MqttConnection* MqttSnRF24::search_cached_connection(const char *szclientid)
 {
   MqttConnection *p = NULL ;
-  uint8_t a = 0;
+  for(p = m_connection_head; p != NULL; p=p->next){
+    if (p->client_id_match(szclientid)) break ;
+  }
+  return p ;
+}
+
+MqttConnection* MqttSnRF24::search_connection_address(const uint8_t *clientaddr)
+{
+  MqttConnection *p = NULL ;
 
   for(p = m_connection_head; p != NULL; p=p->next){
-    if (p->enabled){
-      for (a=0; a < m_address_len; a++){
-	if(p->connect_address[a] != clientaddr[a]) break ;
-      }
-      if (a == m_address_len) return p ;
+    if (!p->is_disconnected() && p->address_match(clientaddr)){
+      return p ;
+    }
+  }
+  return NULL ; // Cannot find
+}
+
+MqttConnection* MqttSnRF24::search_cached_connection_address(const uint8_t *clientaddr)
+{
+  MqttConnection *p = NULL ;
+
+  for(p = m_connection_head; p != NULL; p=p->next){
+    if (p->address_match(clientaddr)){
+      return p ;
     }
   }
   return NULL ; // Cannot find
@@ -407,25 +431,23 @@ MqttConnection* MqttSnRF24::search_connection_address(uint8_t *clientaddr)
 MqttConnection* MqttSnRF24::new_connection()
 {
   MqttConnection *p = NULL, *prev = NULL ;
-  
-  for(p = m_connection_head; p != NULL; p=p->next){
-    if (!p->enabled){
-      // reuse this record
-      return p ;
-    }
-    prev = p ;
-  }
-  // p not found, create new connection at the end of the list
+
   p = new MqttConnection() ;
-  p->prev = prev ; // could be null if the first record
-  if (prev) prev->next = p ;
+
   // Set the head if first record
   if (m_connection_head == NULL) m_connection_head = p ;
+  else{
+    // Append connection to end of connection list
+    for (prev = m_connection_head; prev->next; prev = prev->next){
+      
+    }
+    p->prev = prev ;
+  }
 
   return p ;
 }
 
-void MqttSnRF24::delete_connection(char *szclientid)
+void MqttSnRF24::delete_connection(const char *szclientid)
 {
   MqttConnection *p = NULL, *prev = NULL, *next = NULL ;
 
@@ -457,7 +479,7 @@ void MqttSnRF24::received_connect(uint8_t *sender_address, uint8_t *data, uint8_
 
     pthread_mutex_lock(&m_rwlock) ;
 
-    MqttConnection *con = search_connection(szClientID) ;
+    MqttConnection *con = search_cached_connection(szClientID) ;
     if (!con){
       DPRINT("Cannot find an existing connection, creating a new connection for %s\n", szClientID) ;
       con = new_connection() ;
@@ -467,32 +489,30 @@ void MqttSnRF24::received_connect(uint8_t *sender_address, uint8_t *data, uint8_
       pthread_mutex_unlock(&m_rwlock) ;
       return ; // something went wrong with the allocation
     }
-    
-    con->enabled = true ;
-    con->disconnected = false ;
+
+    con->set_state(MqttConnection::State::connecting);
     con->sleep_duration = 0 ;
     con->asleep_from = 0 ;
     con->update_activity() ; // update activity from client
-    strcpy(con->szclientid, szClientID) ;
+    con->set_client_id(szClientID) ;
     con->duration = (data[2] << 8) | data[3] ; // MSB assumed
-    memcpy(con->connect_address, sender_address, m_address_len) ;
+    con->set_address(sender_address, m_address_len) ;
     
     // If WILL if flagged then set the flags for the message and topic
     bool will = ((FLAG_WILL & data[0]) > 0) ;
-    con->prompt_will_topic = will ;
-    con->prompt_will_message = will ;
-    con->connection_complete = false ; 
+    //if (will) con->set_activity(MqttConnection::Activity::willtopic) ;
 
     pthread_mutex_unlock(&m_rwlock) ;
 
-    if (con->prompt_will_topic){
+    if (will){
       // Start with will topic request
       writemqtt(sender_address, MQTT_WILLTOPICREQ, NULL, 0) ;
     }else{
       // No need for WILL setup, just CONNACK
       uint8_t buff[1] ;
       buff[0] = MQTT_RETURN_ACCEPTED ;
-      con->connection_complete = true ;
+      con->set_state(MqttConnection::State::connected) ;
+      con->set_activity(MqttConnection::Activity::none) ;
       writemqtt(sender_address, MQTT_CONNACK, buff, 1) ;
     }
     
@@ -507,15 +527,15 @@ void MqttSnRF24::received_connack(uint8_t *sender_address, uint8_t *data, uint8_
     pthread_mutex_lock(&m_rwlock) ;
 
     // Was this client connecting?
-    if (!m_client_connection.enabled) return ; // not enabled and expected
+    if (m_client_connection.get_state() != MqttConnection::State::connecting) return ; // not enabled and expected
 
     m_client_connection.update_activity() ;
     m_connect_retries = 0 ; // reset retry, despite server errors
     // TO DO - confirm that the gateway sending this matches the address expected
     // not a major fault but is worth a check
 
-    if (m_client_connection.prompt_will_topic || m_client_connection.prompt_will_message){
-      EPRINT("Connection complete, but will topic or message not prompted\n") ;
+    if (m_client_connection.get_activity() == MqttConnection::Activity::willtopic){
+      EPRINT("Connection complete, but will topic or message not processed\n") ;
     }
 
     // TO DO: Needs to handle the errors properly and inform client of error
@@ -523,26 +543,28 @@ void MqttSnRF24::received_connack(uint8_t *sender_address, uint8_t *data, uint8_
     switch(data[0]){
     case MQTT_RETURN_ACCEPTED:
       DPRINT("CONNACK: {return code = Accepted}\n") ;
-      m_client_connection.connection_complete = true ;
+      m_client_connection.set_state(MqttConnection::State::connected);
       break ;
     case MQTT_RETURN_CONGESTION:
       DPRINT("CONNACK: {return code = Congestion}\n") ;
-      m_client_connection.enabled = false ; // Cannot connect
+      m_client_connection.set_state(MqttConnection::State::disconnected); // Cannot connect
       break ;
     case MQTT_RETURN_INVALID_TOPIC:
       DPRINT("CONNACK: {return code = Invalid Topic}\n") ;
       // Can this still count as a connection?
-      m_client_connection.enabled = false ; // don't allow?
+      m_client_connection.set_state(MqttConnection::State::disconnected); // Don't allow?
       break ;
     case MQTT_RETURN_NOT_SUPPORTED:
       DPRINT("CONNACK: {return code = Not Supported}\n") ;
-      m_client_connection.enabled = false ; // Cannot connect
+      m_client_connection.set_state(MqttConnection::State::disconnected); // Cannot connect
       break ;
     default:
       DPRINT("CONNACK: {return code = %u}\n", data[0]) ;
       // ? Are we connected ?
-      m_client_connection.enabled = false ; // Cannot connect
+      m_client_connection.set_state(MqttConnection::State::disconnected); // Cannot connect
     }
+    
+    m_client_connection.set_activity(MqttConnection::Activity::none) ;
     
     pthread_mutex_unlock(&m_rwlock) ;
 
@@ -554,6 +576,7 @@ void MqttSnRF24::received_willtopicreq(uint8_t *sender_address, uint8_t *data, u
   // Only clients need to respond to this
   if (m_mqtt_type == client){
     DPRINT("WILLTOPICREQ\n") ;
+    if (m_client_connection.get_state() != MqttConnection::State::connecting) return ; // Unexpected
     if (m_willtopicsize == 0){
       // No topic set
       writemqtt(sender_address, MQTT_WILLTOPIC, NULL, 0) ;
@@ -575,7 +598,7 @@ void MqttSnRF24::received_willtopicreq(uint8_t *sender_address, uint8_t *data, u
       memcpy(send+1, m_willtopic, m_willtopicsize) ;
       writemqtt(sender_address, MQTT_WILLTOPIC, send, m_willtopicsize+1) ;
     }
-    m_client_connection.prompt_will_topic = false ;
+    m_client_connection.set_activity(MqttConnection::Activity::willtopic) ;
     m_client_connection.update_activity() ;
   }
 }
@@ -601,7 +624,7 @@ void MqttSnRF24::received_willtopic(uint8_t *sender_address, uint8_t *data, uint
     utf8[len-1] = '\0' ;
     size_t ret = mbrtowc(topic, utf8, MQTT_TOPIC_MAX_BYTES, NULL) ;
     if (ret < 0){
-      con->enabled = false ; // kill connection record
+      con->set_state(MqttConnection::State::disconnected) ;
       buff[0] = MQTT_RETURN_NOT_SUPPORTED ; // Assume something unsupported happened
       writemqtt(sender_address, MQTT_CONNACK, buff, 1) ;
       EPRINT("WILLTOPIC failed to convert utf8 topic string\n") ;
@@ -613,15 +636,7 @@ void MqttSnRF24::received_willtopic(uint8_t *sender_address, uint8_t *data, uint
     
     DPRINT("WILLTOPIC: QOS = %u, Topic = %s\n", qos, utf8) ;
 
-    // Client registered for connection
-    con->prompt_will_topic = false ; // received this now
-    if (con->prompt_will_message){
-      writemqtt(sender_address, MQTT_WILLMSGREQ, NULL, 0) ;
-    }else{
-      con->connection_complete = true ; 
-      buff[0] = MQTT_RETURN_ACCEPTED ;
-      writemqtt(sender_address, MQTT_CONNACK, buff, 1) ;
-    }
+    writemqtt(sender_address, MQTT_WILLMSGREQ, NULL, 0) ;
   }
 }
 
@@ -630,6 +645,7 @@ void MqttSnRF24::received_willmsgreq(uint8_t *sender_address, uint8_t *data, uin
   // Only clients need to respond to this
   if (m_mqtt_type == client){
     DPRINT("WILLMSGREQ\n") ;
+    if (m_client_connection.get_state() != MqttConnection::State::connecting) return ; // Unexpected
 
     if (m_willmessagesize == 0){
       // No topic set
@@ -641,7 +657,7 @@ void MqttSnRF24::received_willmsgreq(uint8_t *sender_address, uint8_t *data, uin
       memcpy(send, m_willmessage, m_willmessagesize) ; 
       writemqtt(sender_address, MQTT_WILLMSG, send, m_willmessagesize) ;
     }
-    m_client_connection.prompt_will_message = false ;
+    m_client_connection.set_activity(MqttConnection::Activity::willmessage) ;
     m_client_connection.update_activity() ;
   }
 }
@@ -667,7 +683,7 @@ void MqttSnRF24::received_willmsg(uint8_t *sender_address, uint8_t *data, uint8_
     if (ret < 0){
       // Conversion failed
       EPRINT("WILLMSG: failed to convert message from UTF8\n") ;
-      con->enabled = false ; // kill connection record with client
+      con->set_state(MqttConnection::State::disconnected) ;
       buff[0] = MQTT_RETURN_NOT_SUPPORTED ; // Assume something unsupported happened
       writemqtt(sender_address, MQTT_CONNACK, buff, 1) ;
       return ;
@@ -676,8 +692,7 @@ void MqttSnRF24::received_willmsg(uint8_t *sender_address, uint8_t *data, uint8_
     DPRINT("WILLMESSAGE: Message = %s\n", utf8) ;
 
     // Client sent final will message
-    con->prompt_will_message = false ; // received this now
-    con->connection_complete = true ;
+    con->set_state(MqttConnection::State::connected) ;
     con->update_activity() ;
     buff[0] = MQTT_RETURN_ACCEPTED ;
     writemqtt(sender_address, MQTT_CONNACK, buff, 1) ;
@@ -701,12 +716,9 @@ void MqttSnRF24::received_disconnect(uint8_t *sender_address, uint8_t *data, uin
       con->asleep_from = time_now ;
     }else{
       DPRINT("DISCONNECT\n") ;
-      con->enabled = false ; // disconnected without sleep
-      // Connection could be deleted...
     }
-    con->disconnected = true ;
-    con->connection_complete = false ;
-    con->lastactivity = time_now ;
+    con->set_state(MqttConnection::State::disconnected) ;
+    con->update_activity() ;
 
     writemqtt(sender_address, MQTT_DISCONNECT, NULL, 0) ;
 
@@ -714,9 +726,9 @@ void MqttSnRF24::received_disconnect(uint8_t *sender_address, uint8_t *data, uin
     // Disconnect request from server to client
     // probably due to an error
     DPRINT("DISCONNECT\n") ;
-    m_client_connection.enabled = false;
-    m_client_connection.connection_complete = false ;
+    m_client_connection.set_state(MqttConnection::State::disconnected) ;
     m_client_connection.free_topics() ;
+    m_client_connection.update_activity() ;
   }
   
 }
@@ -895,9 +907,9 @@ void MqttSnRF24::listen_mode()
 
 }
 
-void MqttSnRF24::queue_received(uint8_t *addr,
+void MqttSnRF24::queue_received(const uint8_t *addr,
 				uint8_t messageid,
-				uint8_t *data,
+				const uint8_t *data,
 				uint8_t len)
 {
   pthread_mutex_lock(&m_rwlock) ;
@@ -923,13 +935,12 @@ bool MqttSnRF24::manage_connections()
     // excludes asleep connections
     if (m_client_connection.is_connected()){
       if (m_client_connection.lost_contact()){
-	DPRINT("Client lost connection to gateway %u\n", m_client_connection.gwid) ;
+	DPRINT("Client lost connection to gateway %u\n", m_client_connection.get_gwid()) ;
 	pthread_mutex_lock(&m_rwlock) ;
 	// Close connection. Take down connection
-	m_client_connection.enabled = false;
-	m_client_connection.disconnected = true ;
-	m_client_connection.connection_complete = false ;
-	MqttGwInfo *gw = get_gateway(m_client_connection.gwid) ;
+	m_client_connection.set_state(MqttConnection::State::disconnected) ;
+	// Disable the gateway in the client register
+	MqttGwInfo *gw = get_gateway(m_client_connection.get_gwid()) ;
 	if (gw){
 	  gw->active = false ;
 	}
@@ -937,7 +948,9 @@ bool MqttSnRF24::manage_connections()
       }else{
 	// Another ping due?      
 	if (m_client_connection.send_another_ping()){
-	  ping(m_client_connection.gwid) ;
+	  DPRINT("Sending a ping to %u\n", m_client_connection.get_gwid()) ;
+	  bool r = ping(m_client_connection.get_gwid()) ;
+	  if (!r) DPRINT("Ping to gw failed\n") ;
 	}
       }
     }
@@ -947,7 +960,7 @@ bool MqttSnRF24::manage_connections()
       if (m_gwinfo[i].allocated && m_gwinfo[i].active){
 	// Check if it has expired
 	if (m_client_connection.is_connected() &&
-	    m_gwinfo[i].gw_id == m_client_connection.gwid){
+	    m_gwinfo[i].gw_id == m_client_connection.get_gwid()){
 	  // ignore the connected gateway as this has been checked
 	  continue ;
 	}
@@ -968,29 +981,19 @@ bool MqttSnRF24::manage_connections()
     // send disconnects if client is not alive
     MqttConnection *p = NULL ;
     for(p = m_connection_head; p != NULL; p=p->next){
-      if (p->enabled){
-	// Manage sleeping clients
-	if (!p->is_asleep() && p->disconnected){
-	  // Client should be out of sleep
-	  // Clean up connection
-	  p->enabled = false ;
-	  p->connection_complete = false ;
-	  // Attempt to send a disconnect
-	  DPRINT("Disconnecting sleeping client: %s\n", p->szclientid);
-	  writemqtt(p->connect_address, MQTT_DISCONNECT, NULL, 0) ;
-	}
-	else if (p->lost_contact()){
-	  // Client is not a sleeping client and is also
-	  // inactive
-	  p->enabled = false ;
-	  p->connection_complete = false ;
-	  // Attempt to send a disconnect
-	  DPRINT("Disconnecting lost client: %s\n", p->szclientid) ;
-	  writemqtt(p->connect_address, MQTT_DISCONNECT, NULL, 0) ;
-	}else if (p->is_connected()){
-	  // Connection should be valid
-	  if (p->send_another_ping())
-	    ping(p->szclientid) ;
+      if (p->is_connected() && p->lost_contact()){
+	// Client is not a sleeping client and is also
+	// inactive
+	p->set_state(MqttConnection::State::disconnected) ;
+	// Attempt to send a disconnect
+	DPRINT("Disconnecting lost client: %s\n", p->get_client_id()) ;
+	writemqtt(p->get_address(), MQTT_DISCONNECT, NULL, 0) ;
+      }else if (p->is_connected()){
+	// Connection should be valid
+	if (p->send_another_ping()){
+	  DPRINT("Sending a ping to %s\n", p->get_client_id()) ;
+	  bool r = ping(p->get_client_id()) ;
+	  if (!r) DPRINT("Ping to client failed\n") ;
 	}
       }
     }    
@@ -1114,9 +1117,9 @@ bool MqttSnRF24::dispatch_queue()
   return ret ;
 }
 
-bool MqttSnRF24::writemqtt(uint8_t *address,
+bool MqttSnRF24::writemqtt(const uint8_t *address,
 			   uint8_t messageid,
-			   uint8_t *buff, uint8_t len)
+			   const uint8_t *buff, uint8_t len)
 {
   bool ret = false ;
   uint8_t send_buff[MQTT_PAYLOAD_WIDTH] ;
@@ -1346,7 +1349,7 @@ uint16_t MqttSnRF24::register_topic(const wchar_t *topic)
     memcpy(buff+4, sztopic, len) ;
     
     for(uint16_t retry = 0;retry < m_max_retries+1;retry++){
-      if (writemqtt(m_client_connection.connect_address, MQTT_REGISTER, buff, 4+len))
+      if (writemqtt(m_client_connection.get_address(), MQTT_REGISTER, buff, 4+len))
 	// add the topic to the client connection
 	return true ;
     }
@@ -1387,29 +1390,27 @@ bool MqttSnRF24::ping(uint8_t gwid)
 
   // Record when the ping was attempted, note that this doesn't care
   // if it worked
-  if (m_client_connection.gwid == gwid)
-    m_client_connection.last_ping = time(NULL) ;
+  if (m_client_connection.get_gwid() == gwid)
+    m_client_connection.reset_ping() ;
   
-  for(uint16_t retry = 0;retry < m_max_retries+1;retry++){
-    if (writemqtt(gw->address, MQTT_PINGREQ, (uint8_t *)m_szclient_id, clientid_len))
-      return true ;
-  }
+  if (writemqtt(gw->address, MQTT_PINGREQ, (uint8_t *)m_szclient_id, clientid_len))
+    return true ;
+
   return false ;
 }
 
-bool MqttSnRF24::ping(char *szclientid)
+bool MqttSnRF24::ping(const char *szclientid)
 {
   MqttConnection *con = search_connection(szclientid) ;
   if (!con) return false ; // cannot ping unknown client
 
   // Record when the ping was attempted, note that this doesn't care
   // if it worked
-  con->last_ping = time(NULL) ;
+  con->reset_ping() ;
 
-  for(uint16_t retry = 0;retry < m_max_retries+1;retry++){
-    if (writemqtt(con->connect_address, MQTT_PINGREQ, NULL, 0))
-      return true ;
-  }
+  if (writemqtt(con->get_address(), MQTT_PINGREQ, NULL, 0))
+    return true ;
+
   return false ; // failed to send the ping
 }
 
@@ -1418,7 +1419,7 @@ bool MqttSnRF24::disconnect(uint16_t sleep_duration)
   uint8_t buff[2] ;
   uint8_t len = 0 ;
   // Already disconnected or other issue closed the connection
-  if (!m_client_connection.enabled) return false ;
+  if (m_client_connection.is_disconnected()) return false ;
 
   if (sleep_duration > 0){
     buff[0] = sleep_duration >> 8 ; //MSB set first
@@ -1426,12 +1427,15 @@ bool MqttSnRF24::disconnect(uint16_t sleep_duration)
     len = 2 ;
   }
 
-  for(uint16_t retry = 0;retry < m_max_retries+1;retry++){
-    if (writemqtt(m_client_connection.connect_address, MQTT_DISCONNECT, buff, len)){
-      m_client_connection.enabled = false ;
-      return true ;
+  if (writemqtt(m_client_connection.get_address(), MQTT_DISCONNECT, buff, len)){
+    if (sleep_duration > 0){
+      m_client_connection.set_state(MqttConnection::State::asleep) ;
+    }else{
+      m_client_connection.set_state(MqttConnection::State::disconnecting) ;
     }
+    return true ;
   }
+  
   return false ; // failed to send the diconnect
 }
 
@@ -1451,23 +1455,24 @@ bool MqttSnRF24::connect(uint8_t gwid, bool will, bool clean, uint16_t duration)
     return false ;
   }
   // Copy connection details
-  m_client_connection.enabled = false ; // do not enable yet
-  m_client_connection.gwid = gw->gw_id ;
-  memcpy(m_client_connection.connect_address, gw->address, m_address_len) ;
+  m_client_connection.set_state(MqttConnection::State::disconnected) ;
+  m_client_connection.set_gwid(gw->gw_id) ;
+  m_client_connection.set_address(gw->address, m_address_len) ;
   pthread_mutex_unlock(&m_rwlock) ;
   
   uint8_t len = strlen(m_szclient_id) ;
   if (len > MAX_MQTT_CLIENTID) throw MqttOutOfRange("Client ID too long") ;
   memcpy(buff+4, m_szclient_id, len) ; // do not copy /0 terminator
 
-  if (writemqtt(m_client_connection.connect_address, MQTT_CONNECT, buff, 4+len)){
+  if (writemqtt(m_client_connection.get_address(), MQTT_CONNECT, buff, 4+len)){
     // Record the start of the connection
     m_connect_start = time(NULL) ;
     m_connect_retries++ ;
-    m_client_connection.enabled = true ; // Sent request, so enable
-    m_client_connection.connection_complete = false ; // orchestration started
-    m_client_connection.prompt_will_topic = will ;
-    m_client_connection.prompt_will_message = will ;
+    m_client_connection.set_state(MqttConnection::State::connecting) ;
+    if(will)
+      m_client_connection.set_activity(MqttConnection::Activity::willtopic) ;
+    else
+      m_client_connection.set_activity(MqttConnection::Activity::none) ;
     m_client_connection.duration = duration ; // keep alive timer for connection
     gw->keepalive(duration) ; // set the keep alive in GW register
 
@@ -1523,7 +1528,7 @@ void MqttSnRF24::print_gw_table()
 bool MqttSnRF24::is_connected(uint8_t gwid)
 {
   if (m_client_connection.is_connected() && 
-      m_client_connection.gwid == gwid
+      m_client_connection.get_gwid() == gwid
       ){
     // Check if it has expired
     if (m_client_connection.lost_contact()){
@@ -1531,8 +1536,7 @@ bool MqttSnRF24::is_connected(uint8_t gwid)
       // gateway was connected but has expired.
       // update connection attributes
       pthread_mutex_lock(&m_rwlock) ;
-      m_client_connection.connection_complete = false ;
-      m_client_connection.enabled = false;
+      m_client_connection.set_state(MqttConnection::State::disconnected) ;
       MqttGwInfo *gw = get_gateway(gwid) ;
       if (gw){
 	gw->active = false ;
@@ -1550,7 +1554,7 @@ bool MqttSnRF24::is_connected(uint8_t gwid)
 bool MqttSnRF24::is_connected()
 {
   // use the current gw id. 
-  return is_connected(m_client_connection.gwid) ;
+  return is_connected(m_client_connection.get_gwid()) ;
 }
 
 void MqttSnRF24::set_willtopic(const wchar_t *topic, uint8_t qos)

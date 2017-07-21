@@ -448,7 +448,7 @@ bool NordicRF24::read_register(uint8_t addr, uint8_t *val, uint8_t len)
   return true ;
 }
 
-bool NordicRF24::write_register(uint8_t addr, uint8_t *val, uint8_t len)
+bool NordicRF24::write_register(uint8_t addr, const uint8_t *val, uint8_t len)
 {
   const uint16_t addmask = 0x01FF;
   if (!m_pSPI) return false ;
@@ -705,7 +705,7 @@ bool NordicRF24::carrier_detect(bool &cd)
   return true ;
 }
 
-bool NordicRF24::set_rx_address(uint8_t pipe, uint8_t *address, uint8_t len)
+bool NordicRF24::set_rx_address(uint8_t pipe, const uint8_t *address, uint8_t len)
 {
   if (pipe >= RF24_PIPES) return false ; // out of range
 
@@ -752,7 +752,7 @@ bool NordicRF24::get_rx_address(uint8_t pipe, uint8_t *address, uint8_t *len)
   return read_register(REG_RX_ADDR_BASE+pipe, address, address_width);
 }
 
-bool NordicRF24::set_tx_address(uint8_t *address, uint8_t len)
+bool NordicRF24::set_tx_address(const uint8_t *address, uint8_t len)
 {
   uint8_t address_width = get_address_width();
   if (address_width != len){

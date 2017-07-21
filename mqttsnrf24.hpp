@@ -121,22 +121,34 @@ protected:
 
 class MqttConnection{
 public:
+  enum State{
+    disconnected, connected, 
+    asleep, connecting, disconnecting
+  };
+  enum Activity{
+    none, willtopic, willmessage,registering, publishing, subscribing
+  };
+  
   MqttConnection(){
     topics = NULL ;
     next = NULL ;
     prev = NULL ;
-    prompt_will_topic = false ;
-    prompt_will_message = false ;
+    //prompt_will_topic = false ;
+    //prompt_will_message = false ;
     duration = 0 ; // keep alive timer
-    gwid = 0 ;
-    enabled = false ; // client not heard from becomes disabled
-    disconnected = false ;
-    connection_complete = false ;
-    lastactivity = 0 ;
+    m_gwid = 0 ;
+    //enabled = false ; // client not heard from becomes disabled
+    //disconnected = false ;
+    //connection_complete = false ;
+    m_lastactivity = 0 ;
     sleep_duration = 0 ;
     asleep_from = 0 ;
-    last_ping =0;
-    messageid = 0;
+    m_last_ping =0;
+    m_messageid = 0;
+    m_address_len = 0 ;
+    m_state = State::disconnected ;
+    m_activity = Activity::none ;
+    m_szclientid[0] = '\0' ;
   }
   // Client connection will register that it is creating a topic
   // Needs to be formally added with a complete_topic call
@@ -151,47 +163,76 @@ public:
   bool del_topic_by_messageid(uint16_t messageid) ;
   void free_topics() ; // delete all topics and free mem
   void update_activity(){ // received activity from client or server
-    lastactivity = time(NULL) ;
+    m_lastactivity = time(NULL) ;
+    reset_ping() ;
   }
   bool send_another_ping(){
-    return ((last_ping + (duration)) < time(NULL)) ;
+    return ((m_last_ping + (duration)) < time(NULL)) ;
   }
+  void reset_ping(){m_last_ping = time(NULL) ;}
   bool is_asleep(){
-    return (time(NULL) < asleep_from+sleep_duration) ;
+    return m_state == State::asleep ;
   }
 
+  void set_client_id(const char *sz){strncpy(m_szclientid, sz, MAX_MQTT_CLIENTID);}
+  bool client_id_match(const char *sz){return (strcmp(sz, m_szclientid) == 0);}
+  const char* get_client_id(){return m_szclientid;}
+  State get_state(){return m_state;}
+  void set_state(State s){m_state = s;}
+  Activity get_activity(){return m_activity;}
+  void set_activity(Activity a){m_activity = a;}
+
   bool is_connected(){
-    // Ignoring timers, does this connection think it's connected?
-    return (enabled &&
-	    !disconnected &&
-	    connection_complete) ;
+    return m_state == State::connected ;
+  }
+  bool is_disconnected(){
+    return m_state == State::disconnected ;
   }
 
   // Not thread protected!
-  uint16_t get_new_messageid(){if(messageid == 0xFFFF)messageid=0;return ++messageid;}
+  uint16_t get_new_messageid(){if(m_messageid == 0xFFFF)m_messageid=0;return ++m_messageid;}
   
   bool lost_contact(){
     // Give 5 retries before failing. This mutliplies the time assuming that
     // all pings will be sent timely
-    return ((lastactivity + (duration * 5)) < time(NULL)) ;
+    return ((m_lastactivity + (duration * 5)) < time(NULL)) ;
   }
+  bool address_match(const uint8_t *addr){
+    for (uint8_t a=0; a < m_address_len; a++){
+      if (m_connect_address[a] != addr[a]) return false ;
+    }
+    return true ;
+  }
+  void set_address(const uint8_t *addr, uint8_t len){
+    memcpy(m_connect_address, addr, len) ;
+    m_address_len = len ;
+  }
+
+  const uint8_t* get_address(){return m_connect_address;}
+
+  void set_gwid(uint8_t gwid){m_gwid = gwid;}
+  uint8_t get_gwid(){return m_gwid;}
   MqttTopic *topics ;
   MqttConnection *next; // linked list of connections (gw only)
   MqttConnection *prev ; // linked list of connections (gw only)
-  bool enabled ; // This record is valid
-  bool disconnected ; // client issued a disconnect if true
-  bool connection_complete ; // protocol complete
-  char szclientid[MAX_MQTT_CLIENTID+1] ; // client id for gw
-  uint8_t gwid ; // gw id for client connections
-  uint8_t connect_address[MAX_RF24_ADDRESS_LEN] ; // client or gw address
-  bool prompt_will_topic ; // waiting for will topic
-  bool prompt_will_message ; // waiting for will message
+  //bool enabled ; // This record is valid
+  //bool disconnected ; // client issued a disconnect if true
+  //bool connection_complete ; // protocol complete
+  //bool prompt_will_topic ; // waiting for will topic
+  //bool prompt_will_message ; // waiting for will message
   uint16_t duration ; // keep alive duration
-  time_t lastactivity ; // when did we last hear from the client (sec)
   time_t asleep_from ;
   uint16_t sleep_duration ;
-  time_t last_ping ;
-  uint16_t messageid ;
+protected:
+  uint8_t m_gwid ; // gw id for client connections
+  time_t m_last_ping ;
+  time_t m_lastactivity ; // when did we last hear from the client (sec)
+  uint16_t m_messageid ;
+  char m_szclientid[MAX_MQTT_CLIENTID+1] ; // client id for gw
+  uint8_t m_connect_address[MAX_RF24_ADDRESS_LEN] ; // client or gw address
+  uint8_t m_address_len ;
+  State m_state ;
+  Activity m_activity ;
 };
 
 class MqttGwInfo{
@@ -299,7 +340,7 @@ public:
 
   // Ping for use by a gateway to check a client is alive
   // Returns false if client is not connected or ping fails (with ACK)
-  bool ping(char *szclientid) ;
+  bool ping(const char *szclientid) ;
   // Ping for use by a client to check a gateway is alive
   // Returns false if gateway is unknown or transmit failed (with ACK)
   bool ping(uint8_t gw);
@@ -357,22 +398,34 @@ protected:
   MqttGwInfo* get_gateway_address(uint8_t *gwaddress) ;
   MqttGwInfo* get_available_gateway();
   uint8_t *get_gateway_address();
-  MqttConnection* search_connection(char *szclientid);
-  MqttConnection* search_connection_address(uint8_t *clientaddr);
+  // Searches for a client connection using the client ID
+  // Only returns connected clients 
+  MqttConnection* search_connection(const char *szclientid);
+  // Searches all cached connections connected and disconnected
+  // Returns NULL if no matches found
+  MqttConnection* search_cached_connection(const char *szclientid);
+  // Searches for connections by address. Only returns connected
+  // clients. Returns NULL if no connected clients can be found
+  MqttConnection* search_connection_address(const uint8_t *clientaddr);
+  // Searches for connections by address regardless of connection state.
+  // Returns NULL if no connections can be found
+  MqttConnection* search_cached_connection_address(const uint8_t *clientaddr);
+  // Creates a new connection and appends to end of client connection list
   MqttConnection* new_connection();
-  void delete_connection(char *szclientid);
+  // Removes a connection from the connection cache.
+  void delete_connection(const char *szclientid);
   
   // Queue the data received until dispatch is called.
   // Overwrites old queue messages without error if not dispacted quickly
-  void queue_received(uint8_t *addr,
+  void queue_received(const uint8_t *addr,
 		      uint8_t messageid,
-		      uint8_t *data,
+		      const uint8_t *data,
 		      uint8_t len) ;
     
   // Creates header and body. Writes to address
   // Throws MqttIOErr or MqttOutOfRange exceptions
   // Returns false if connection failed max retries
-  bool writemqtt(uint8_t *address, uint8_t messageid, uint8_t *buff, uint8_t len);
+  bool writemqtt(const uint8_t *address, uint8_t messageid, const uint8_t *buff, uint8_t len);
   void listen_mode() ;
   void send_mode() ;
   
