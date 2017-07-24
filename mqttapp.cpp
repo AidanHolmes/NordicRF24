@@ -190,7 +190,6 @@ int main(int argc, char **argv)
   time_t last_search = 0, last_register = 0 ;
   const uint16_t search_interval = 5 ; // sec
   const uint16_t ping_interval = 30 ; // sec
-  const uint16_t t_retry = 15 ; // sec
   bool ret = false ;
   bool gateway_known = false ;
   uint8_t gwhandle =0;
@@ -214,24 +213,19 @@ int main(int argc, char **argv)
 	gateway_known = mqtt.get_known_gateway(&gwhandle) ;
       }else{
 	// Known gateway. Check if the gateway is alive and connected
-	if (!mqtt.is_connected(gwhandle) &&
-	    mqtt.connect_expired(t_retry)){
-	  printf("Connected and connect attempt expired\n") ;
+	if (mqtt.is_disconnected()){
+	  printf("Connecting...\n") ;
 	  mqtt.set_willtopic(L"a/b/c/d", 0) ;
 	  mqtt.set_willmessage(L"Hello World\x00A9") ;
 
-	  if (mqtt.connect_max_retry(true)){
+	  try{
+	    if (mqtt.connect(gwhandle, true, true, ping_interval))
+	      printf("Sending connect to %u\n", gwhandle) ;
+	  }catch (MqttConnectErr &e){
+	    printf("Cannot connect: %s\n", e.what()) ;
 	    gateway_known = false ;
-	  }else{
-	    try{
-	      if (mqtt.connect(gwhandle, true, true, ping_interval))
-		printf("Sending connect to %u\n", gwhandle) ;
-	    }catch (MqttConnectErr &e){
-	      printf("Cannot connect: %s\n", e.what()) ;
-	      gateway_known = false ;
-	    }
 	  }
-	}else{ // Connected
+	}else if (mqtt.is_connected(gwhandle)){ // Connected
 	  if (last_register+10 < now){
 	    mqtt.register_topic(L"IT/IS/A/baby") ;
 	    last_register = now ;

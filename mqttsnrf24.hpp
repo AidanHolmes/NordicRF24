@@ -122,14 +122,15 @@ protected:
 class MqttConnection{
 public:
   enum State{
-    disconnected, connected, 
-    asleep, connecting, disconnecting
+    disconnected, connected, asleep, // states
+    connecting, disconnecting // transition states
   };
   enum Activity{
-    none, willtopic, willmessage,registering, publishing, subscribing
+    none, willtopic, willmessage, registering, publishing, subscribing
   };
   
   MqttConnection(){
+    m_topic_iterator = NULL ;
     topics = NULL ;
     next = NULL ;
     prev = NULL ;
@@ -149,6 +150,10 @@ public:
     m_state = State::disconnected ;
     m_activity = Activity::none ;
     m_szclientid[0] = '\0' ;
+    m_attempts = 0;
+    m_lasttry = 0 ;
+    m_message_cache_len = 0 ;
+    m_message_cache_id = 0 ;
   }
   // Client connection will register that it is creating a topic
   // Needs to be formally added with a complete_topic call
@@ -162,6 +167,9 @@ public:
   bool del_topic(uint16_t id) ;
   bool del_topic_by_messageid(uint16_t messageid) ;
   void free_topics() ; // delete all topics and free mem
+  void iterate_first_topic() ;
+  MqttTopic* get_next_topic() ;
+  MqttTopic* get_curr_topic() ;
   void update_activity(){ // received activity from client or server
     m_lastactivity = time(NULL) ;
     reset_ping() ;
@@ -178,9 +186,14 @@ public:
   bool client_id_match(const char *sz){return (strcmp(sz, m_szclientid) == 0);}
   const char* get_client_id(){return m_szclientid;}
   State get_state(){return m_state;}
-  void set_state(State s){m_state = s;}
+  void set_state(State s){m_state = s;m_attempts=0;m_lasttry=time(NULL);}
   Activity get_activity(){return m_activity;}
-  void set_activity(Activity a){m_activity = a;}
+  void set_activity(Activity a){m_activity = a;m_attempts=0;m_lasttry=time(NULL);}
+  bool state_timeout(uint16_t timeout){
+    if((timeout+m_lasttry) < time(NULL)){m_attempts++; m_lasttry = time(NULL); return true;}
+    else return false ;
+  }
+  uint16_t state_timeout_count(){return m_attempts;}
 
   bool is_connected(){
     return m_state == State::connected ;
@@ -207,12 +220,19 @@ public:
     memcpy(m_connect_address, addr, len) ;
     m_address_len = len ;
   }
-
   const uint8_t* get_address(){return m_connect_address;}
 
+  void set_cache(uint8_t messageid, const uint8_t *message, uint8_t len){
+    memcpy(m_message_cache, message, len) ;
+    m_message_cache_len = len ;
+    m_message_cache_id = messageid ;
+  }
+  const uint8_t* get_cache(){return m_message_cache;}
+  uint8_t get_cache_len(){return m_message_cache_len;}
+  uint8_t get_cache_id(){return m_message_cache_id;}
+  
   void set_gwid(uint8_t gwid){m_gwid = gwid;}
   uint8_t get_gwid(){return m_gwid;}
-  MqttTopic *topics ;
   MqttConnection *next; // linked list of connections (gw only)
   MqttConnection *prev ; // linked list of connections (gw only)
   //bool enabled ; // This record is valid
@@ -224,6 +244,8 @@ public:
   time_t asleep_from ;
   uint16_t sleep_duration ;
 protected:
+  MqttTopic *topics ;
+  MqttTopic *m_topic_iterator ;
   uint8_t m_gwid ; // gw id for client connections
   time_t m_last_ping ;
   time_t m_lastactivity ; // when did we last hear from the client (sec)
@@ -233,6 +255,13 @@ protected:
   uint8_t m_address_len ;
   State m_state ;
   Activity m_activity ;
+  uint8_t m_message_cache[MQTT_PAYLOAD_WIDTH] ;
+  uint8_t m_message_cache_len ;
+  uint8_t m_message_cache_id ;
+
+  // Connection retry attributes
+  time_t m_lasttry ;
+  uint16_t m_attempts ;
 };
 
 class MqttGwInfo{
@@ -291,6 +320,9 @@ public:
   // mode
   void initialise(enType type, uint8_t address_len, uint8_t *broadcast, uint8_t *address) ;
 
+  // Set the retry attributes. This affects all future connections
+  void set_retry_attributes(uint16_t Tretry, uint16_t Nretry) ;
+
   // Gateways can define how often the advertise is sent
   void set_advertise_interval(uint16_t t) ;
   
@@ -326,10 +358,11 @@ public:
   // Returns false if connection couldn't be made due to timeout or
   // no known gateway to connect to. Timeouts only detected if using ACKS on pipes
   bool connect(uint8_t gwid, bool will, bool clean, uint16_t duration) ; 
-  bool connect_expired(uint16_t retry_time) ; // has the connect request expired?
-  bool connect_max_retry(bool reset); // Has exceeded retry counter?
+  //bool connect_expired(uint16_t retry_time) ; // has the connect request expired?
+  //bool connect_max_retry(bool reset); // Has exceeded retry counter?
   bool is_connected(uint8_t gwid) ; // are we connected to this gw?
   bool is_connected() ; // are we connected to any gateway?
+  bool is_disconnected() ; // are we disconnected to any gateway?
   void set_willtopic(const wchar_t *topic, uint8_t qos) ;
   void set_willmessage(const wchar_t *message) ;
 
@@ -348,6 +381,9 @@ public:
   // Register a topic with the server. Returns the topic id to use
   // when publishing messages. Returns 0 if the register fails.
   uint16_t register_topic(const wchar_t *topic) ;
+
+  // Register a topic to a client. Returns false if failed
+  bool register_topic(MqttConnection *con, MqttTopic *t);
   
   // Handles connections to gateways or to clients. Dispatches queued messages
   // Will return false if a queued message cannot be dispatched.
@@ -377,6 +413,12 @@ protected:
   // returns false if a message cannot be sent.
   // Recommend retrying later if it fails (only applies if using acks on pipes)
   bool dispatch_queue();
+
+  // Connection state handling for clients
+  void manage_gw_connection() ;
+  void manage_client_connection(MqttConnection *p);
+  bool manage_pending_message(MqttConnection &con);
+  void complete_client_connection(MqttConnection *p) ;
 
   virtual bool data_received_interrupt() ;
   void received_advertised(uint8_t *sender_address, uint8_t *data, uint8_t len) ;
@@ -439,18 +481,21 @@ protected:
   uint8_t m_queue_head ;
 
   uint16_t m_max_retries ;
+  time_t m_Tretry ;
+  uint16_t m_Nretry ;
 
   MqttConnection *m_connection_head ;
 
   // Connection attributes for a client
-  time_t m_connect_start ;
-  uint16_t m_connect_retries ;
+  //time_t m_connect_start ;
+  //uint16_t m_connect_retries ;
   MqttConnection m_client_connection ;
   char m_willtopic[MQTT_TOPIC_MAX_BYTES+1] ;
   char m_willmessage[MQTT_MESSAGE_MAX_BYTES+1] ;
   size_t m_willtopicsize ;
   size_t m_willmessagesize ;
   uint8_t m_willtopicqos ;
+  uint16_t m_sleep_duration ;
 
   // Gateway connection attributes
   struct mosquitto *m_pmosquitto ;
@@ -459,6 +504,7 @@ protected:
   bool m_mosquitto_initialised ;
   uint8_t m_gwid;
   bool m_broker_connected ;
+  bool m_register_all ;
 };
 
 
