@@ -170,6 +170,7 @@ public:
   void iterate_first_topic() ;
   MqttTopic* get_next_topic() ;
   MqttTopic* get_curr_topic() ;
+  MqttTopic* get_topic(uint16_t topicid) ;
   void update_activity(){ // received activity from client or server
     m_lastactivity = time(NULL) ;
     reset_ping() ;
@@ -371,6 +372,23 @@ public:
   // Returns false if disconnect cannot be sent (ACK enabled)
   bool disconnect(uint16_t sleep_duration = 0) ;
 
+  // Publishes a -1 QoS message which do not require a connection.
+  // This call publishes short topics (2 bytes).
+  // Requires a known gateway (requires manual specification of GW)
+  bool publish_noqos(uint8_t gwid,
+		     char sztopic,
+		     uint8_t *payload,
+		     uint8_t payload_len);
+
+  // Publish for connected clients. Doesn't support -1 QoS
+  // Only pulishes normal registered topics
+  // Returns false if message cannot be sent or client not connected
+  bool publish(uint16_t topicid,
+	       uint8_t qos,
+	       bool retain,
+	       uint8_t *payload,
+	       uint8_t payload_len);
+  
   // Ping for use by a gateway to check a client is alive
   // Returns false if client is not connected or ping fails (with ACK)
   bool ping(const char *szclientid) ;
@@ -400,6 +418,10 @@ public:
   void print_gw_table() ;
 
 protected:
+
+  static void gateway_publish_callback(struct mosquitto *m,
+				       void *data,
+				       int mid);
 
   static void gateway_disconnect_callback(struct mosquitto *m,
 					  void *data,
@@ -435,6 +457,15 @@ protected:
   void received_disconnect(uint8_t *sender_address, uint8_t *data, uint8_t len) ;
   void received_register(uint8_t *sender_address, uint8_t *data, uint8_t len) ;
   void received_regack(uint8_t *sender_address, uint8_t *data, uint8_t len) ;
+  void received_publish(uint8_t *sender_address, uint8_t *data, uint8_t len) ;
+  void received_puback(uint8_t *sender_address, uint8_t *data, uint8_t len) ;
+  void received_pubrec(uint8_t *sender_address, uint8_t *data, uint8_t len) ;
+  void received_pubrel(uint8_t *sender_address, uint8_t *data, uint8_t len) ;
+  void received_pubcomp(uint8_t *sender_address, uint8_t *data, uint8_t len) ;
+  void received_subscribe(uint8_t *sender_address, uint8_t *data, uint8_t len) ;
+  void received_suback(uint8_t *sender_address, uint8_t *data, uint8_t len) ;
+  void received_unsubscribe(uint8_t *sender_address, uint8_t *data, uint8_t len) ;
+  void received_unsuback(uint8_t *sender_address, uint8_t *data, uint8_t len) ;
 
   MqttGwInfo* get_gateway(uint8_t gwid);
   MqttGwInfo* get_gateway_address(uint8_t *gwaddress) ;
