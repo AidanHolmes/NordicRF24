@@ -1,5 +1,4 @@
 //   Copyright 2017 Aidan Holmes
-
 //   Licensed under the Apache License, Version 2.0 (the "License");
 //   you may not use this file except in compliance with the License.
 //   You may obtain a copy of the License at
@@ -227,7 +226,11 @@ int main(int argc, char **argv)
 	  }
 	}else if (mqtt.is_connected(gwhandle)){ // Connected
 	  if (last_register+10 < now){
-	    mqtt.register_topic(L"IT/IS/A/baby") ;
+	    uint16_t id ;
+	    if ((id=mqtt.register_topic(L"IT/IS/A/baby"))){
+	      // id created
+	      mqtt.publish(id, 0, true, (uint8_t*)"123", 3) ;
+	    }
 	    last_register = now ;
 	  }
 	}
