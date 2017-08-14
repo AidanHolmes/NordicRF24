@@ -7,7 +7,7 @@ CFLAGS = $(CXXFLAGS)
 LIBS = -lwiringPi -lpihw -lpthread
 LDFLAGS = -I$(HWLIBS) -L$(HWLIBS)
 
-SRCS_MQTT = mqttapp.cpp mqttsnrf24.cpp bufferedrf24.cpp rpinrf24.cpp
+SRCS_MQTT = mqttapp.cpp mqttsnrf24.cpp bufferedrf24.cpp rpinrf24.cpp mqttconnection.cpp mqtttopic.cpp
 OBJS_MQTT = $(SRCS_MQTT:.cpp=.o) 
 
 SRCS_CMD = radioutil.c

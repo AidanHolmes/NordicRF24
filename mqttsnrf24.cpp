@@ -268,7 +268,7 @@ void MqttSnRF24::received_publish(uint8_t *sender_address, uint8_t *data, uint8_
 	  return ;
 	}
 	
-	MqttTopic *topic = con->get_topic(topicid) ;
+	MqttTopic *topic = con->topics.get_topic(topicid) ;
 	if (!topic){
 	  EPRINT("Client topic id %d unknown to gateway\n", topicid) ;
 	  buff[4] = MQTT_RETURN_INVALID_TOPIC ;
@@ -388,7 +388,7 @@ void MqttSnRF24::received_register(uint8_t *sender_address, uint8_t *data, uint8
       pthread_mutex_unlock(&m_rwlock) ;
       return ;
     }
-    uint16_t topicid = con->add_topic(sztopic, messageid) ;
+    uint16_t topicid = con->topics.add_topic(sztopic, messageid) ;
     uint8_t response[5] ;
     response[0] = topicid >> 8 ; // Write topicid MSB first
     response[1] = topicid & 0x00FF ;
@@ -417,32 +417,32 @@ void MqttSnRF24::received_regack(uint8_t *sender_address, uint8_t *data, uint8_t
     switch(returncode){
     case MQTT_RETURN_ACCEPTED:
       DPRINT("REGACK: {return code = Accepted}\n") ;
-      if (!m_client_connection.complete_topic(messageid, topicid)){
+      if (!m_client_connection.topics.complete_topic(messageid, topicid)){
 	DPRINT("Cannnot complete topic %u with messageid %u\n", topicid, messageid) ;
       }
       break ;
     case MQTT_RETURN_CONGESTION:
       DPRINT("REGACK: {return code = Congestion}\n") ;
-      m_client_connection.del_topic_by_messageid(messageid) ;
+      m_client_connection.topics.del_topic_by_messageid(messageid) ;
       break ;
     case MQTT_RETURN_INVALID_TOPIC:
       DPRINT("REGACK: {return code = Invalid Topic}\n") ;
-      m_client_connection.del_topic_by_messageid(messageid) ;
+      m_client_connection.topics.del_topic_by_messageid(messageid) ;
       break ;
     case MQTT_RETURN_NOT_SUPPORTED:
       DPRINT("REGACK: {return code = Not Supported}\n") ;
-      m_client_connection.del_topic_by_messageid(messageid) ;
+      m_client_connection.topics.del_topic_by_messageid(messageid) ;
       break ;
     default:
       DPRINT("REGACK: {return code = %u}\n", returncode) ;
-      m_client_connection.del_topic_by_messageid(messageid) ;
+      m_client_connection.topics.del_topic_by_messageid(messageid) ;
     }
   }else if(m_mqtt_type == gateway){
     MqttConnection *con = search_connection_address(sender_address) ;
     if (con->is_connected()){
       if (m_register_all){
 	MqttTopic *t = NULL ;
-	if ((t=con->get_next_topic())){
+	if ((t=con->topics.get_next_topic())){
 	  if (!register_topic(con, t)){
 	    DPRINT("Failed to register topic id %u, name %s\n",
 		   t->get_id(), t->get_topic()) ;
@@ -471,10 +471,11 @@ void MqttSnRF24::received_pingresp(uint8_t *sender_address, uint8_t *data, uint8
     MqttGwInfo *gw = get_gateway_address(sender_address);
     if (gw){
       gw->update_activity() ;
-    }
-    if (gw->gw_id == m_client_connection.get_gwid()){
-      // Ping received from connected gateway
-      m_client_connection.update_activity() ;
+
+      if (gw->gw_id == m_client_connection.get_gwid()){
+	// Ping received from connected gateway
+	m_client_connection.update_activity() ;
+      }
     }
   }
   pthread_mutex_unlock(&m_rwlock) ;
@@ -713,7 +714,7 @@ void MqttSnRF24::received_connect(uint8_t *sender_address, uint8_t *data, uint8_
 
     // If clean flag is set then remove all topics
     if (((FLAG_CLEANSESSION & data[0]) > 0)){
-      con->free_topics() ;
+      con->topics.free_topics() ;
     }
     
     // If WILL if flagged then set the flags for the message and topic
@@ -740,9 +741,9 @@ void MqttSnRF24::complete_client_connection(MqttConnection *p)
   if (!p) return ;
   p->update_activity() ;
   p->set_state(MqttConnection::State::connected) ;
-  p->iterate_first_topic();
+  p->topics.iterate_first_topic();
   MqttTopic *t = NULL ;
-  if ((t=p->get_curr_topic())){
+  if ((t=p->topics.get_curr_topic())){
     // Topics are set on the connection
     p->set_activity(MqttConnection::Activity::registering) ;
     m_register_all = true ;
@@ -964,7 +965,7 @@ void MqttSnRF24::received_disconnect(uint8_t *sender_address, uint8_t *data, uin
       m_client_connection.set_state(MqttConnection::State::asleep) ;
     else
       m_client_connection.set_state(MqttConnection::State::disconnected) ;
-    m_client_connection.free_topics() ; // client always forgets topics
+    m_client_connection.topics.free_topics() ; // client always forgets topics
     m_client_connection.update_activity() ;
   }
   
@@ -1183,7 +1184,7 @@ void MqttSnRF24::manage_gw_connection()
     DPRINT("Client lost connection to gateway %u\n", m_client_connection.get_gwid()) ;
     // Close connection. Take down connection
     m_client_connection.set_state(MqttConnection::State::disconnected) ;
-    m_client_connection.free_topics() ; // clear all topics
+    m_client_connection.topics.free_topics() ; // clear all topics
     // Disable the gateway in the client register
     MqttGwInfo *gw = get_gateway(m_client_connection.get_gwid()) ;
     if (gw){
@@ -1556,154 +1557,6 @@ bool MqttSnRF24::writemqtt(const uint8_t *address,
   return ret ;
 }
 
-uint16_t MqttConnection::reg_topic(char *sztopic, uint16_t messageid)
-{
-  MqttTopic *p = NULL, *insert_at = NULL ;
-  if (!topics){
-    // No topics in connection.
-    // Create the head topic. No index set
-    topics = new MqttTopic(0, messageid, sztopic) ;
-    return 0;
-  }
-  for (p = topics; p; p = p->next()){
-    if (strcmp(p->get_topic(), sztopic) == 0){
-      // topic exists
-      DPRINT("Topic %s already exists for connection\n", sztopic) ;
-      return p->get_id() ;
-    }
-    // Add 1 to be unique
-    insert_at = p ; // Save last valid topic pointer
-  }
-
-  insert_at->link_tail(new MqttTopic(0, messageid, sztopic)) ;
-  return 0 ;
-}
-
-bool MqttConnection::complete_topic(uint16_t messageid, uint16_t topicid)
-{
-  MqttTopic *p = NULL ;
-  if (!topics) return false ; // no topics
-  for (p = topics; p; p = p->next()){
-    if (p->get_message_id() == messageid && !p->is_complete()){
-      p->complete(topicid) ;
-      return true ;
-    }
-  }
-  // Cannot find an incomplete topic that needs completing
-  return false ;
-}
-
-uint16_t MqttConnection::add_topic(char *sztopic, uint16_t messageid)
-{
-  MqttTopic *p = NULL, *insert_at = NULL ;
-  uint16_t available_id = 0 ;
-  if (!topics){
-    // No topics in connection.
-    // Create the head topic. Always index 1
-    topics = new MqttTopic(1, messageid, sztopic) ;
-    return 1;
-  }
-  for (p = topics; p; p = p->next()){
-    if (strcmp(p->get_topic(), sztopic) == 0){
-      // topic exists
-      DPRINT("Topic %s already exists for connection\n", sztopic) ;
-      return p->get_id() ;
-    }
-    // Add 1 to be unique
-    if (p->get_id() > available_id) available_id = p->get_id() + 1 ;
-    insert_at = p ; // Save last valid topic pointer
-  }
-  // If connection was to run a long time with creation and deletion of topics then
-  // the ID count will overflow! Overflows in 18 hours if requested every second
-  // TO DO: Better implementation of ID assignment and improved data structure
-  p = new MqttTopic(available_id, messageid, sztopic) ;
-  p->complete(available_id) ; // server completes the topic
-  insert_at->link_tail(p);
-  return available_id ;
-}
-
-bool MqttConnection::del_topic_by_messageid(uint16_t messageid)
-{
-  MqttTopic *p = NULL ;
-  for (p=topics;p;p = p->next()){
-    if (p->get_message_id() == messageid){
-      if (p->is_head()){
-	topics = p->next() ;
-      }else{
-	p->unlink() ;
-      }
-      delete p ;
-      return true ;
-    }
-  }
-  return false ;
-}
-
-bool MqttConnection::del_topic(uint16_t id)
-{
-  MqttTopic *p = NULL ;
-  for (p=topics;p;p = p->next()){
-    if (p->get_id() == id){
-      if (p->is_head()){
-	topics = p->next() ;
-      }else{
-	p->unlink() ;
-      }
-      delete p ;
-      return true ;
-    }
-  }
-  return false ;
-}
-
-void MqttConnection::free_topics()
-{
-  MqttTopic *p = topics,*delme = NULL ;
-
-  while(p){
-    // Cannot unlink the head
-    if (!p->is_head()){
-      p->unlink() ;
-      delme = p;
-      p = p->next() ;
-      delete delme ;
-    }else{
-      p = p->next() ;
-    }
-  }
-  if (topics){
-    delete topics ;
-    topics = NULL ;
-  }
-}
- 
-void MqttConnection::iterate_first_topic()
-{
-  m_topic_iterator = topics ;
-}
-
-MqttTopic* MqttConnection::get_topic(uint16_t topicid)
-{
-  if (!topics) return NULL ;
-  for (MqttTopic *it = topics; it; it = it->next()){
-    if (it->get_id() == topicid) return it ;
-  }
-  return NULL ;
-}
- 
-MqttTopic* MqttConnection::get_next_topic()
-{
-  if (!m_topic_iterator) return NULL ;
-  m_topic_iterator = m_topic_iterator->next() ;
-
-  return m_topic_iterator ;
-}
- 
-MqttTopic* MqttConnection::get_curr_topic()
-{
-  return m_topic_iterator ;
-}
- 
 bool MqttSnRF24::searchgw(uint8_t radius)
 {
   uint8_t buff[1] ;
@@ -1769,7 +1622,7 @@ uint16_t MqttSnRF24::register_topic(const wchar_t *topic)
     pthread_mutex_lock(&m_rwlock) ;
     uint16_t mid = m_client_connection.get_new_messageid() ;
     // Register the topic
-    if ((ret = m_client_connection.reg_topic(sztopic, mid)) > 0)
+    if ((ret = m_client_connection.topics.reg_topic(sztopic, mid)) > 0)
       return ret ; // already exists
 
     pthread_mutex_unlock(&m_rwlock) ;
@@ -1929,7 +1782,7 @@ bool MqttSnRF24::connect(uint8_t gwid, bool will, bool clean, uint16_t duration)
   }
   // Copy connection details
   m_client_connection.set_state(MqttConnection::State::disconnected) ;
-  m_client_connection.free_topics() ; // clear all topics
+  m_client_connection.topics.free_topics() ; // clear all topics
   m_client_connection.set_gwid(gw->gw_id) ;
   m_client_connection.set_address(gw->address, m_address_len) ;
   pthread_mutex_unlock(&m_rwlock) ;

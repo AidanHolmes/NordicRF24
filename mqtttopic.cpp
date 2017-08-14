@@ -1,0 +1,191 @@
+#include "mqtttopic.hpp"
+#include <stdio.h>
+#include <string.h>
+
+#ifdef DEBUG
+#define DPRINT(x,...) fprintf(stdout,x,##__VA_ARGS__)
+#define EPRINT(x,...) fprintf(stderr,x,##__VA_ARGS__)
+#else
+#define DPRINT(x,...)
+#define EPRINT(x,...)
+#endif
+
+void MqttTopic::set_topic(uint16_t topic, uint16_t messageid, char *sztopic)
+{
+  m_topicid = topic ;
+  strncpy(m_sztopic, sztopic, MQTT_TOPIC_MAX_BYTES) ;
+  m_messageid = messageid ;
+  m_registered_at = time(NULL) ;
+}
+
+void MqttTopic::reset()
+{
+  m_next = NULL;
+  m_prev = NULL;
+  m_sztopic[0] = '\0' ;
+  m_topicid = 0;
+  m_messageid = 0;
+  m_acknowledged = false ;
+  m_registered_at = 0 ;
+  m_timeout = 5 ;
+}
+
+MqttTopicCollection::MqttTopicCollection()
+{
+  m_topic_iterator = NULL ;
+  topics = NULL ;
+}
+
+MqttTopicCollection::~MqttTopicCollection()
+{
+  free_topics() ;
+}
+
+uint16_t MqttTopicCollection::reg_topic(char *sztopic, uint16_t messageid)
+{
+  MqttTopic *p = NULL, *insert_at = NULL ;
+  if (!topics){
+    // No topics in collection.
+    // Create the head topic. No index set
+    topics = new MqttTopic(0, messageid, sztopic) ;
+    return 0;
+  }
+  for (p = topics; p; p = p->next()){
+    if (strcmp(p->get_topic(), sztopic) == 0){
+      // topic exists
+      DPRINT("Topic %s already exists for collection\n", sztopic) ;
+      return p->get_id() ;
+    }
+    // Add 1 to be unique
+    insert_at = p ; // Save last valid topic pointer
+  }
+
+  insert_at->link_tail(new MqttTopic(0, messageid, sztopic)) ;
+  return 0 ;
+}
+
+bool MqttTopicCollection::complete_topic(uint16_t messageid, uint16_t topicid)
+{
+  MqttTopic *p = NULL ;
+  if (!topics) return false ; // no topics
+  for (p = topics; p; p = p->next()){
+    if (p->get_message_id() == messageid && !p->is_complete()){
+      p->complete(topicid) ;
+      return true ;
+    }
+  }
+  // Cannot find an incomplete topic that needs completing
+  return false ;
+}
+
+uint16_t MqttTopicCollection::add_topic(char *sztopic, uint16_t messageid)
+{
+  MqttTopic *p = NULL, *insert_at = NULL ;
+  uint16_t available_id = 0 ;
+  if (!topics){
+    // No topics in collection.
+    // Create the head topic. Always index 1
+    topics = new MqttTopic(1, messageid, sztopic) ;
+    return 1;
+  }
+  for (p = topics; p; p = p->next()){
+    if (strcmp(p->get_topic(), sztopic) == 0){
+      // topic exists
+      DPRINT("Topic %s already exists for collection\n", sztopic) ;
+      return p->get_id() ;
+    }
+    // Add 1 to be unique
+    if (p->get_id() > available_id) available_id = p->get_id() + 1 ;
+    insert_at = p ; // Save last valid topic pointer
+  }
+  // If collection was to run a long time with creation and deletion of topics then
+  // the ID count will overflow! Overflows in 18 hours if requested every second
+  // TO DO: Better implementation of ID assignment and improved data structure
+  p = new MqttTopic(available_id, messageid, sztopic) ;
+  p->complete(available_id) ; // server completes the topic
+  insert_at->link_tail(p);
+  return available_id ;
+}
+
+bool MqttTopicCollection::del_topic_by_messageid(uint16_t messageid)
+{
+  MqttTopic *p = NULL ;
+  for (p=topics;p;p = p->next()){
+    if (p->get_message_id() == messageid){
+      if (p->is_head()){
+	topics = p->next() ;
+      }else{
+	p->unlink() ;
+      }
+      delete p ;
+      return true ;
+    }
+  }
+  return false ;
+}
+
+bool MqttTopicCollection::del_topic(uint16_t id)
+{
+  MqttTopic *p = NULL ;
+  for (p=topics;p;p = p->next()){
+    if (p->get_id() == id){
+      if (p->is_head()){
+	topics = p->next() ;
+      }else{
+	p->unlink() ;
+      }
+      delete p ;
+      return true ;
+    }
+  }
+  return false ;
+}
+
+void MqttTopicCollection::free_topics()
+{
+  MqttTopic *p = topics,*delme = NULL ;
+
+  while(p){
+    // Cannot unlink the head
+    if (!p->is_head()){
+      p->unlink() ;
+      delme = p;
+      p = p->next() ;
+      delete delme ;
+    }else{
+      p = p->next() ;
+    }
+  }
+  if (topics){
+    delete topics ;
+    topics = NULL ;
+  }
+  m_topic_iterator = NULL ;
+}
+ 
+void MqttTopicCollection::iterate_first_topic()
+{
+  m_topic_iterator = topics ;
+}
+
+MqttTopic* MqttTopicCollection::get_topic(uint16_t topicid)
+{
+  if (!topics) return NULL ;
+  for (MqttTopic *it = topics; it; it = it->next()){
+    if (it->get_id() == topicid) return it ;
+  }
+  return NULL ;
+}
+ 
+MqttTopic* MqttTopicCollection::get_next_topic()
+{
+  if (!m_topic_iterator) return NULL ;
+  m_topic_iterator = m_topic_iterator->next() ;
+
+  return m_topic_iterator ;
+}
+ 
+MqttTopic* MqttTopicCollection::get_curr_topic()
+{
+  return m_topic_iterator ;
+}
