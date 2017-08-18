@@ -182,8 +182,7 @@ int main(int argc, char **argv)
 
   mqtt.initialise(opt_gw?MqttSnRF24::gateway:MqttSnRF24::client, ADDR_WIDTH, rf24broadcast, rf24address) ;
 
-  print_state(&mqtt) ;
-  
+  print_state(&mqtt) ;  
   
   time_t now = time(NULL) ;
   time_t last_search = 0, last_register = 0 ;
@@ -229,7 +228,12 @@ int main(int argc, char **argv)
 	    uint16_t id ;
 	    if ((id=mqtt.register_topic(L"IT/IS/A/baby"))){
 	      // id created
-	      mqtt.publish(id, 0, true, (uint8_t*)"123", 3) ;
+	      mqtt.publish(id, 2, true, (uint8_t*)"123", 3) ;
+	      uint8_t mqttdat[sizeof(time_t)];
+	      time_t now = time(NULL) ;
+	      for(int timedat=0; timedat < sizeof(time_t); timedat++)
+		mqttdat[timedat] = now >> (8*timedat);
+	      mqtt.publish_noqos(gwhandle, "AZ", mqttdat, sizeof(time_t), false);
 	    }
 	    last_register = now ;
 	  }
@@ -239,7 +243,6 @@ int main(int argc, char **argv)
     mqtt.manage_connections() ;
     nano_sleep(0, 5000000) ; // 5ms wait
   }
-
 
   mqtt.reset_rf24();
   pi.output(opt_ce, IHardwareGPIO::low);

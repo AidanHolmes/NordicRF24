@@ -54,6 +54,7 @@ public:
     return m_state == State::disconnected ;
   }
 
+
   // This is not a thread safe call. 
   uint16_t get_new_messageid() ;
   
@@ -81,7 +82,23 @@ public:
 
   // Read the cached message ID
   uint8_t get_cache_id(){return m_message_cache_id;}
-  
+
+  // Set the temporary parameters for a publish. This caches
+  // the entries.
+  void set_pub_entities(uint16_t topicid,
+			uint16_t messageid,
+			uint8_t topictype,
+			int qos, int len, uint8_t *payload, bool retain) ;
+
+  uint16_t get_pub_topicid();
+  uint16_t get_pub_messageid() ;
+  int get_pub_qos();
+  int get_pub_payload_len();
+  const uint8_t* get_pub_payload();
+  bool get_pub_retain();
+  uint8_t get_pub_topic_type() ;
+
+
   void set_gwid(uint8_t gwid){m_gwid = gwid;}
   uint8_t get_gwid(){return m_gwid;}
   MqttConnection *next; // linked list of connections (gw only)
@@ -112,6 +129,17 @@ protected:
   // Connection retry attributes
   time_t m_lasttry ;
   uint16_t m_attempts ;
+
+  // Publish entities
+  uint16_t m_tmptopicid ;
+  uint16_t m_tmpmessageid ;
+  int m_tmpqos ;
+  int m_tmpmessagelen ;
+  uint8_t m_tmppubmessage[MQTT_MESSAGE_MAX_BYTES+1] ;
+  bool m_tmpretain ;
+  uint8_t m_tmptopictype ;
+
+
 };
 
 

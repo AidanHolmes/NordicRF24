@@ -52,6 +52,13 @@ public:
   }
 };
 
+class MqttParamErr : public RF24Exception{
+public:
+  MqttParamErr(const char *sz){
+    do_except("Parameter Error: ", sz) ;
+  }
+};
+
 class MqttMessageQueue{
 public:
   MqttMessageQueue(){
@@ -180,10 +187,20 @@ public:
   // This call publishes short topics (2 bytes).
   // Requires a known gateway (requires manual specification of GW)
   bool publish_noqos(uint8_t gwid,
-		     char sztopic,
+		     char* sztopic,
 		     uint8_t *payload,
-		     uint8_t payload_len);
+		     uint8_t payload_len,
+		     bool retain) ;
 
+  // Publish a -1 QoS message. Topic ID must relate to a pre-defined
+  // topic.
+  bool publish_noqos(uint8_t gwid,
+		     uint16_t topicid,
+		     uint8_t topictype,
+		     uint8_t *payload,
+		     uint8_t payload_len,
+		     bool retain);
+  
   // Publish for connected clients. Doesn't support -1 QoS
   // Only pulishes normal registered topics
   // Returns false if message cannot be sent or client not connected
@@ -200,12 +217,18 @@ public:
   // Returns false if gateway is unknown or transmit failed (with ACK)
   bool ping(uint8_t gw);
 
+  // Client call
   // Register a topic with the server. Returns the topic id to use
   // when publishing messages. Returns 0 if the register fails.
   uint16_t register_topic(const wchar_t *topic) ;
 
+  // Server call
   // Register a topic to a client. Returns false if failed
   bool register_topic(MqttConnection *con, MqttTopic *t);
+
+  // Server call
+  // Create a pre-defined topic
+  bool create_predefined_topic(uint16_t topicid, const wchar_t *name) ;
   
   // Handles connections to gateways or to clients. Dispatches queued messages
   // Will return false if a queued message cannot be dispatched.
@@ -305,7 +328,12 @@ protected:
   bool writemqtt(const uint8_t *address, uint8_t messageid, const uint8_t *buff, uint8_t len);
   void listen_mode() ;
   void send_mode() ;
-  
+
+  // Gateway function to write PUBLISH messages to the MQTT server
+  // Requires a connection to extract the registered topic
+  // Returns false if the MQTT server cannot be processed
+  bool server_publish(MqttConnection *con);
+
   uint8_t m_broadcast[MAX_RF24_ADDRESS_LEN];
   uint8_t m_address[MAX_RF24_ADDRESS_LEN];
   char m_szclient_id[MAX_MQTT_CLIENTID+1] ; // Client ID
@@ -333,13 +361,14 @@ protected:
   uint16_t m_sleep_duration ;
 
   // Gateway connection attributes
+  MqttTopicCollection m_predefined_topics ;
   struct mosquitto *m_pmosquitto ;
   time_t m_last_advertised ;
   uint16_t m_advertise_interval ;
   bool m_mosquitto_initialised ;
   uint8_t m_gwid;
   bool m_broker_connected ;
-  bool m_register_all ;
+  bool m_register_all ;  
 };
 
 

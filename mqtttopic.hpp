@@ -9,8 +9,7 @@ class MqttTopic{
 public:
   MqttTopic(){reset();}
   MqttTopic(uint16_t topic, uint16_t mid, char *sztopic){reset();set_topic(topic, mid, sztopic);}
-  // Clients will set the messageid, servers need to set from REGISTER
-  // requested value.
+
   void set_topic(uint16_t topic, uint16_t messageid, char *sztopic) ;
   void reset() ;
   bool registration_expired(){return (m_registered_at + m_timeout) < time(NULL);}
@@ -22,6 +21,8 @@ public:
   MqttTopic *prev(){return m_prev;}
   bool is_complete(){return m_acknowledged;}
   void complete(uint16_t tid){m_acknowledged = true ;m_topicid=tid;}
+  void set_predefined(bool predefined){m_predefined = predefined;}
+  bool is_predefined(){return m_predefined;}
   void unlink(){if (!is_head())m_prev->m_next = m_next;}
   void link_head(MqttTopic *topic){if (m_prev)m_prev->m_next = topic;m_prev = topic;} // adds topic ahead
   void link_tail(MqttTopic *topic){if (m_next)m_next->m_prev = topic;m_next = topic;} // adds topic after
@@ -34,6 +35,7 @@ protected:
   bool m_acknowledged ;
   time_t m_registered_at ;
   uint16_t m_timeout ;
+  bool m_predefined;
 };
 
 class MqttTopicCollection{
@@ -48,6 +50,11 @@ public:
   // server adds a topic.
   // Will return a new Topic ID or if the topic already exists, the existing Topic ID
   uint16_t add_topic(char *sztopic, uint16_t messageid=0) ;
+
+  // Add a topic to the collection with a specific topic ID
+  // returns false if the topic ID has already been allocated
+  bool create_topic(char *sztopic, uint16_t topicid) ;
+  
   // Client call to complete topic and update topicid. Returns false if not found
   bool complete_topic(uint16_t messageid, uint16_t topicid) ;
   bool del_topic(uint16_t id) ;

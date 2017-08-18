@@ -84,6 +84,55 @@ void MqttConnection::set_cache(uint8_t messageid, const uint8_t *message, uint8_
   m_message_cache_id = messageid ;
 }
 
+void MqttConnection::set_pub_entities(uint16_t topicid,
+				      uint16_t messageid,
+				      uint8_t topictype,
+				      int qos, int len,
+				      uint8_t *payload, bool retain)
+{
+  m_tmptopicid = topicid ;
+  m_tmptopictype = topictype ;
+  m_tmpmessageid = messageid ;
+  m_tmpqos = qos ;
+  m_tmpmessagelen = len ;
+  memcpy(m_tmppubmessage, payload, len) ;
+  m_tmpretain = retain ;
+}
+
+uint8_t MqttConnection::get_pub_topic_type()
+{
+  return m_tmptopictype ;
+}
+
+uint16_t MqttConnection::get_pub_topicid()
+{
+  return m_tmptopicid ;
+}
+
+uint16_t MqttConnection::get_pub_messageid()
+{
+  return m_tmpmessageid ;
+}
+
+int MqttConnection::get_pub_qos()
+{
+  return m_tmpqos ;
+}
+
+int MqttConnection::get_pub_payload_len()
+{
+  return m_tmpmessagelen ;
+}
+
+const uint8_t* MqttConnection::get_pub_payload()
+{
+  return m_tmppubmessage ;
+}
+
+bool MqttConnection::get_pub_retain()
+{
+  return m_tmpretain ;
+}
 
 
 

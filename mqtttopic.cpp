@@ -28,6 +28,7 @@ void MqttTopic::reset()
   m_acknowledged = false ;
   m_registered_at = 0 ;
   m_timeout = 5 ;
+  m_predefined = false ;
 }
 
 MqttTopicCollection::MqttTopicCollection()
@@ -56,7 +57,6 @@ uint16_t MqttTopicCollection::reg_topic(char *sztopic, uint16_t messageid)
       DPRINT("Topic %s already exists for collection\n", sztopic) ;
       return p->get_id() ;
     }
-    // Add 1 to be unique
     insert_at = p ; // Save last valid topic pointer
   }
 
@@ -76,6 +76,39 @@ bool MqttTopicCollection::complete_topic(uint16_t messageid, uint16_t topicid)
   }
   // Cannot find an incomplete topic that needs completing
   return false ;
+}
+
+bool MqttTopicCollection::create_topic(char *sztopic, uint16_t topicid)
+{
+  MqttTopic *p = NULL, *insert_at = NULL ;
+  uint16_t available_id = 0 ;
+
+  // To Do: Verify that the topic name doesn't contain wildcards for
+  // pre-defined topics
+  if (!topics){
+    // No topics in collection.
+    // Create the head topic.
+    topics = new MqttTopic(topicid, 0, sztopic) ;
+    topics->set_predefined(true) ;
+    return true;
+  }
+
+  for (p = topics; p; p = p->next()){
+    if (p->get_id() == topicid){
+      // topic exists
+      DPRINT("Topic ID %u already exists for collection\n", topicid) ;
+      return false ;
+    }
+    insert_at = p ; // Save last valid topic pointer
+  }
+  // If collection was to run a long time with creation and deletion of topics then
+  // the ID count will overflow! Overflows in 18 hours if requested every second
+  // TO DO: Better implementation of ID assignment and improved data structure
+  p = new MqttTopic(topicid, 0, sztopic) ;
+  p->set_predefined(true) ;
+  p->complete(available_id) ; // server completes the topic
+  insert_at->link_tail(p);
+  return true ;
 }
 
 uint16_t MqttTopicCollection::add_topic(char *sztopic, uint16_t messageid)

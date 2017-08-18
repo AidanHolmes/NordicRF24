@@ -194,6 +194,7 @@ void MqttSnRF24::received_publish(uint8_t *sender_address, uint8_t *data, uint8_
   uint8_t topic_type = data[0] & (FLAG_DEFINED_TOPIC_ID | FLAG_SHORT_TOPIC_NAME);
   uint8_t payload[MQTT_MESSAGE_MAX_BYTES] ;
   int payload_len = len-5 ;
+  int ret = 0;
   memcpy(payload, data+5, payload_len) ;
 
   uint8_t buff[5] ; // Response buffer
@@ -235,62 +236,68 @@ void MqttSnRF24::received_publish(uint8_t *sender_address, uint8_t *data, uint8_
 	writemqtt(sender_address, MQTT_PUBACK, buff, 5) ;
 	return ;
       }
-	
-      break ;
-    }
-
-    if (topic_type == FLAG_DEFINED_TOPIC_ID){
-      // TO DO: create topic collection class to hold static
-      // topic IDs
-      DPRINT("Defined topic IDs are not supported\n") ;
-      buff[4] = MQTT_RETURN_NOT_SUPPORTED ;
-      writemqtt(sender_address, MQTT_PUBACK, buff, 5) ;
-      return ;
-    }
-
-    switch(mosqos){
-    case 0:
+      // Just publish and forget for QoS -1
       if (topic_type == FLAG_SHORT_TOPIC_NAME){
 	char szshort[3] ;
-	szshort[0] = (char)data[1] ;
-	szshort[1] = (char)data[2] ;
+	szshort[0] = (char)(buff[0]);
+	szshort[1] = (char)(buff[1]) ;
 	szshort[2] = '\0';
-	mosquitto_publish(m_pmosquitto,
-			  &mid,
-			  szshort,
-			  payload_len,
-			  payload, mosqos,
-			  data[0] & FLAG_RETAIN) ;
-      }else{
-	MqttConnection *con = search_connection_address(sender_address);
-	if (!con){
-	  EPRINT("No registered connection for client\n") ;
-	  return ;
-	}
-	
-	MqttTopic *topic = con->topics.get_topic(topicid) ;
-	if (!topic){
-	  EPRINT("Client topic id %d unknown to gateway\n", topicid) ;
+	ret = mosquitto_publish(m_pmosquitto,
+				&mid,
+				szshort,
+				payload_len,
+				payload, 0,
+				data[0] & FLAG_RETAIN) ;
+      }else if(topic_type == FLAG_DEFINED_TOPIC_ID){
+	MqttTopic *t = m_predefined_topics.get_topic(topicid);
+	if (!t){
+	  DPRINT("Cannot find topic %u in the pre-defined list\n", topicid) ;
 	  buff[4] = MQTT_RETURN_INVALID_TOPIC ;
 	  writemqtt(sender_address, MQTT_PUBACK, buff, 5) ;
 	  return ;
 	}
-	mosquitto_publish(m_pmosquitto,
-			  &mid,
-			  topic->get_topic(),
-			  payload_len,
-			  payload, mosqos,
-			  data[0] & FLAG_RETAIN) ;
+	ret = mosquitto_publish(m_pmosquitto,
+				&mid,
+				t->get_topic(),
+				payload_len,
+				payload, 0,
+				data[0] & FLAG_RETAIN) ;	
       }
-      buff[4] = MQTT_RETURN_ACCEPTED ;
-      if (qos != FLAG_QOSN1) writemqtt(sender_address, MQTT_PUBACK, buff, 5) ;
+      if (ret != MOSQ_ERR_SUCCESS)
+	EPRINT("Mosquitto publish failed with code %d\n", ret) ;
       return ;
+    }
+
+    MqttConnection *con = search_connection_address(sender_address);
+    if (!con){
+      EPRINT("No registered connection for client\n") ;
+      return;
+    }
+    // Store the publish entities for transmission to the server
+    // The server can only handle one publish transaction at a time from a client
+    con->set_pub_entities(topicid,
+			  messageid,
+			  topic_type,
+			  mosqos,
+			  payload_len,
+			  payload,
+			  data[0] & FLAG_RETAIN);
+
+    // Handle QoS > -1
+    switch(mosqos){
+    case 0:
+      server_publish(con) ;
+      break ;
     case 1:
+      if (server_publish(con)){
+	buff[4] = MQTT_RETURN_ACCEPTED ;
+	writemqtt(sender_address, MQTT_PUBACK, buff, 5) ;
+      }
+      break ;
     case 2:
-      DPRINT("QoS %d not implemented yet\n", mosqos) ;
-      buff[4] = MQTT_RETURN_NOT_SUPPORTED ;
-      writemqtt(sender_address, MQTT_PUBACK, buff, 5) ;
-      return ;
+      writemqtt(sender_address, MQTT_PUBREC, buff+2, 2) ;
+      con->set_activity(MqttConnection::Activity::publishing);
+      break ;
     default:
       EPRINT("Invalid QoS %d\n", mosqos) ;
     }
@@ -299,6 +306,88 @@ void MqttSnRF24::received_publish(uint8_t *sender_address, uint8_t *data, uint8_
     // Subscriptions will create publish messages
   }
 }
+
+bool MqttSnRF24::server_publish(MqttConnection *con)
+{
+  int mid = 0, ret = 0 ;
+  uint8_t buff[5] ; // Response buffer
+  if (!con){
+    EPRINT("No registered connection for client\n") ;
+    return false;
+  }
+
+  uint16_t topicid = con->get_pub_topicid() ;
+  uint16_t messageid = con->get_pub_messageid() ;
+  const uint8_t *sender_address = con->get_address() ;
+  buff[0] = topicid >> 8 ; // replicate topic id 
+  buff[1] = (topicid & 0x00FF) ; // replicate topic id 
+  buff[2] = messageid >> 8 ; // replicate message id
+  buff[3] = (messageid & 0x00FF) ; // replicate message id
+  
+  if (con->get_pub_topic_type() == FLAG_SHORT_TOPIC_NAME){
+    char szshort[3] ;
+    szshort[0] = (char)(buff[0]);
+    szshort[1] = (char)(buff[1]) ;
+    szshort[2] = '\0';
+    ret = mosquitto_publish(m_pmosquitto,
+			    &mid,
+			    szshort,
+			    con->get_pub_payload_len(),
+			    con->get_pub_payload(),
+			    con->get_pub_qos(),
+			    con->get_pub_retain()) ;
+    if (ret != MOSQ_ERR_SUCCESS){
+      EPRINT("Mosquitto publish failed with code %d\n", ret);
+      return false ;
+    }
+  }else if(con->get_pub_topic_type()  == FLAG_DEFINED_TOPIC_ID){
+    MqttTopic *topic = m_predefined_topics.get_topic(topicid);
+    if (!topic){
+      EPRINT("Predefined topic id %u unrecognised\n", topicid);
+      buff[4] = MQTT_RETURN_INVALID_TOPIC ;
+      writemqtt(sender_address, MQTT_PUBACK, buff, 5) ;
+      return false;
+    }
+    ret = mosquitto_publish(m_pmosquitto,
+			    &mid,
+			    topic->get_topic(),
+			    con->get_pub_payload_len(),
+			    con->get_pub_payload(),
+			    con->get_pub_qos(),
+			    con->get_pub_retain()) ;
+    if (ret != MOSQ_ERR_SUCCESS){
+      EPRINT("Mosquitto publish failed with code %d\n", ret);
+      buff[4] = MQTT_RETURN_CONGESTION ;
+      writemqtt(sender_address, MQTT_PUBACK, buff, 5) ;
+      return false ;
+    }
+    
+  }else{ // Normal Topic ID
+    MqttTopic *topic = con->topics.get_topic(topicid) ;
+    if (!topic){
+      EPRINT("Client topic id %d unknown to gateway\n", topicid) ;
+      buff[4] = MQTT_RETURN_INVALID_TOPIC ;
+      writemqtt(sender_address, MQTT_PUBACK, buff, 5) ;
+      return false;
+    }
+    ret = mosquitto_publish(m_pmosquitto,
+			    &mid,
+			    topic->get_topic(),
+			    con->get_pub_payload_len(),
+			    con->get_pub_payload(),
+			    con->get_pub_qos(),
+			    con->get_pub_retain()) ;
+    if (ret != MOSQ_ERR_SUCCESS){
+      EPRINT("Mosquitto publish failed with code %d\n", ret);
+      buff[4] = MQTT_RETURN_CONGESTION ;
+      writemqtt(sender_address, MQTT_PUBACK, buff, 5) ;
+      return false ;
+    }
+    
+  }
+  return true ;
+}
+
 void MqttSnRF24::received_puback(uint8_t *sender_address, uint8_t *data, uint8_t len)
 {
   if (len != 5) return ;
@@ -336,17 +425,69 @@ void MqttSnRF24::received_puback(uint8_t *sender_address, uint8_t *data, uint8_t
 
 void MqttSnRF24::received_pubrec(uint8_t *sender_address, uint8_t *data, uint8_t len)
 {
+  if (m_mqtt_type == client){
+    if (m_client_connection.get_activity() != MqttConnection::Activity::publishing)
+      return ; // client is not expecting a pubrec
+    // not for this client if the connection address is different
+    if (!m_client_connection.address_match(sender_address)) return ; 
 
+    // Note the server activity and reset timers
+    m_client_connection.update_activity() ;
+
+    // Is this a QoS == 2? To Do: Implement check
+
+    // Check the length, does it match expected PUBREC length?
+    if (len != 2) return ;
+    
+    uint16_t messageid = (data[0] << 8) | data[1] ; // Assuming MSB is first
+    DPRINT("PUBREC {messageid = %u}\n", messageid) ;
+    writemqtt(sender_address, MQTT_PUBREL, data, 2) ;
+  }
 }
 
 void MqttSnRF24::received_pubrel(uint8_t *sender_address, uint8_t *data, uint8_t len)
 {
+  if (len != 2) return ; // Invalid PUBREL message length
+  uint16_t messageid = (data[0] << 8) | data[1] ; // Assuming MSB is first
+  DPRINT("PUBREL {messageid = %u}\n", messageid) ;
 
+  if (m_mqtt_type == gateway){
+    
+    MqttConnection *con = search_connection_address(sender_address);
+    if (!con){
+      EPRINT("No registered connection for client\n") ;
+      return;
+    }
+    if (con->get_activity() != MqttConnection::Activity::publishing){
+      EPRINT("PUBREL received for a non-publishing client\n") ;
+      return ;
+    }
+
+    con->update_activity() ;
+    con->set_activity(MqttConnection::Activity::none) ; // reset activity
+    if (server_publish(con))
+      writemqtt(sender_address, MQTT_PUBCOMP, data, 2) ;
+  }
 }
 
 void MqttSnRF24::received_pubcomp(uint8_t *sender_address, uint8_t *data, uint8_t len)
 {
+  if (len != 2) return ; // Invalid PUBCOMP message length
+  uint16_t messageid = (data[0] << 8) | data[1] ; // Assuming MSB is first
+  DPRINT("PUBCOMP {messageid = %u}\n", messageid) ;
 
+  if (m_mqtt_type == client){
+    if (m_client_connection.get_activity() != MqttConnection::Activity::publishing)
+      return ; // client is not expecting a pubrec
+    // not for this client if the connection address is different
+    if (!m_client_connection.address_match(sender_address)) return ; 
+
+    // Note the server activity and reset timers
+    m_client_connection.update_activity() ;
+
+    // Reset the connection activity
+    m_client_connection.set_activity(MqttConnection::Activity::none) ;
+  }
 }
 
 void MqttSnRF24::received_subscribe(uint8_t *sender_address, uint8_t *data, uint8_t len)
@@ -384,7 +525,7 @@ void MqttSnRF24::received_register(uint8_t *sender_address, uint8_t *data, uint8
     pthread_mutex_lock(&m_rwlock) ;
     MqttConnection *con = search_connection_address(sender_address) ;
     if (!con){
-      DPRINT("REGISTER - Cannnot find a connection for the client\n") ;
+      DPRINT("REGISTER - Cannot find a connection for the client\n") ;
       pthread_mutex_unlock(&m_rwlock) ;
       return ;
     }
@@ -418,7 +559,7 @@ void MqttSnRF24::received_regack(uint8_t *sender_address, uint8_t *data, uint8_t
     case MQTT_RETURN_ACCEPTED:
       DPRINT("REGACK: {return code = Accepted}\n") ;
       if (!m_client_connection.topics.complete_topic(messageid, topicid)){
-	DPRINT("Cannnot complete topic %u with messageid %u\n", topicid, messageid) ;
+	DPRINT("Cannot complete topic %u with messageid %u\n", topicid, messageid) ;
       }
       break ;
     case MQTT_RETURN_CONGESTION:
@@ -1604,6 +1745,23 @@ bool MqttSnRF24::register_topic(MqttConnection *con, MqttTopic *t)
   return false ;
 }
 
+bool MqttSnRF24::create_predefined_topic(uint16_t topicid, const wchar_t *name)
+{
+  char sztopic[MQTT_TOPIC_MAX_BYTES] ;
+  
+  try{
+    wchar_to_utf8(name,
+		  sztopic,
+		  (unsigned)(MQTT_TOPIC_SAFE_BYTES + (MAX_RF24_ADDRESS_LEN - m_address_len)));
+  }catch(MqttOutOfRange &e){
+    DPRINT("Throwing exception - cannot convert pre-defined topic to UTF-8\n") ;
+    throw ;
+  }
+  
+  m_predefined_topics.add_topic(sztopic, topicid) ;
+  return true ;
+}
+
 uint16_t MqttSnRF24::register_topic(const wchar_t *topic)
 {
   char sztopic[MQTT_TOPIC_MAX_BYTES] ;
@@ -1621,10 +1779,12 @@ uint16_t MqttSnRF24::register_topic(const wchar_t *topic)
   if (m_client_connection.is_connected()){
     pthread_mutex_lock(&m_rwlock) ;
     uint16_t mid = m_client_connection.get_new_messageid() ;
-    // Register the topic
-    if ((ret = m_client_connection.topics.reg_topic(sztopic, mid)) > 0)
+    // Register the topic. Return value is zero if topic is new
+    ret = m_client_connection.topics.reg_topic(sztopic, mid) ;
+    if(ret > 0){
       return ret ; // already exists
-
+    }
+    
     pthread_mutex_unlock(&m_rwlock) ;
     buff[0] = 0 ;
     buff[1] = 0 ; // topic ID set to zero
@@ -1723,10 +1883,51 @@ bool MqttSnRF24::disconnect(uint16_t sleep_duration)
   return false ; // failed to send the diconnect
 }
 
-bool MqttSnRF24::publish_noqos(uint8_t gwid, char sztopic, uint8_t *payload, uint8_t payload_len)
+bool MqttSnRF24::publish_noqos(uint8_t gwid, char* sztopic, uint8_t *payload, uint8_t payload_len, bool retain)
 {
+  uint16_t topicid = 0;
   // This will send Qos -1 messages with a short topic
-  return false ;
+  if (strlen(sztopic) != 2) return false ; // must be 2 bytes
+  topicid = (sztopic[0] << 8) | sztopic[1] ;
+  return publish_noqos(gwid,
+		       topicid,
+		       FLAG_SHORT_TOPIC_NAME,
+		       payload, payload_len, retain) ;
+}
+
+bool MqttSnRF24::publish_noqos(uint8_t gwid, uint16_t topicid, uint8_t topictype, uint8_t *payload, uint8_t payload_len, bool retain)
+{
+  uint8_t buff[MQTT_PAYLOAD_WIDTH-2] ;
+  buff[0] = (retain?FLAG_RETAIN:0) | FLAG_QOSN1 | topictype ;
+  buff[1] = topicid >> 8 ;
+  buff[2] = topicid & 0x00FF ;
+  buff[3] = 0 ;
+  buff[4] = 0 ;
+  uint8_t len = payload_len + 5 ;
+  if (len > (MQTT_PAYLOAD_WIDTH-7-m_address_len)){
+    EPRINT("Payload of %u bytes is too long for publish\n", payload_len) ;
+    throw MqttOutOfRange("PUBLISH payload too long") ;
+    return false ;
+  }
+  memcpy(buff+5,payload, payload_len);
+
+  DPRINT("NOQOS - topicid %u, topictype %u, flags %X\n",topicid,topictype,buff[0]) ;
+
+  MqttGwInfo *gw = get_gateway(gwid) ;
+  if (!gw) return false ;
+
+  if(topictype == FLAG_SHORT_TOPIC_NAME ||
+     topictype == FLAG_DEFINED_TOPIC_ID){
+    if (!writemqtt(gw->address, MQTT_PUBLISH, buff, len)){
+      EPRINT("Failed to send QoS -1 message\n") ;
+      return false ;
+    }
+  }else if (topictype == FLAG_NORMAL_TOPIC_ID){
+    throw MqttParamErr("QoS -1 cannot support normal topic IDs") ;
+  }else{
+    throw MqttParamErr("QoS -1 unknown topic type") ;
+  }
+  return true ;
 }
 
 bool MqttSnRF24::publish(uint16_t topicid, uint8_t qos, bool retain, uint8_t *payload, uint8_t payload_len)
@@ -1741,13 +1942,13 @@ bool MqttSnRF24::publish(uint16_t topicid, uint8_t qos, bool retain, uint8_t *pa
     (qos==1?FLAG_QOS1:0) |
     (qos==2?FLAG_QOS2:0) |
     FLAG_NORMAL_TOPIC_ID;
-  buff[1] = topicid << 8 ;
+  buff[1] = topicid >> 8 ;
   buff[2] = topicid & 0x00FF ;
   uint16_t mid = m_client_connection.get_new_messageid() ;
   buff[3] = mid << 8 ;
   buff[4] = mid & 0x00FF ;
   uint8_t len = payload_len + 5 ;
-  if (len > (MQTT_PAYLOAD_WIDTH-2)){
+  if (len > (MQTT_PAYLOAD_WIDTH-7-m_address_len)){
     EPRINT("Payload of %u bytes is too long for publish\n", payload_len) ;
     throw MqttOutOfRange("PUBLISH payload too long") ;
     return false ;
