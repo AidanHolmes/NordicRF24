@@ -312,6 +312,9 @@ protected:
   MqttConnection* search_cached_connection_address(const uint8_t *clientaddr);
   // Creates a new connection and appends to end of client connection list
   MqttConnection* new_connection();
+  // Get the connection for a specified mosquitto connection.
+  // Returns NULL if the message id cannot be found.
+  MqttConnection* search_mosquitto_id(int mid) ;
   // Removes a connection from the connection cache.
   void delete_connection(const char *szclientid);
   

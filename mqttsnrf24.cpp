@@ -283,25 +283,14 @@ void MqttSnRF24::received_publish(uint8_t *sender_address, uint8_t *data, uint8_
 			  payload,
 			  data[0] & FLAG_RETAIN);
 
-    // Handle QoS > -1
-    switch(mosqos){
-    case 0:
-      server_publish(con) ;
-      break ;
-    case 1:
-      if (server_publish(con)){
-	buff[4] = MQTT_RETURN_ACCEPTED ;
-	writemqtt(sender_address, MQTT_PUBACK, buff, 5) ;
-      }
-      break ;
-    case 2:
-      writemqtt(sender_address, MQTT_PUBREC, buff+2, 2) ;
-      con->set_activity(MqttConnection::Activity::publishing);
-      break ;
-    default:
-      EPRINT("Invalid QoS %d\n", mosqos) ;
+    if (!server_publish(con)){
+      EPRINT("Could not complete the PUBLISH message with the MQTT server\n") ;
+      buff[4] = MQTT_RETURN_CONGESTION;
+      writemqtt(sender_address, MQTT_PUBACK, buff, 5) ;
+      return ;      
     }
-    
+    con->set_activity(MqttConnection::Activity::publishing);
+
   }else if (m_mqtt_type == client){
     // Subscriptions will create publish messages
   }
@@ -337,15 +326,20 @@ bool MqttSnRF24::server_publish(MqttConnection *con)
 			    con->get_pub_qos(),
 			    con->get_pub_retain()) ;
     if (ret != MOSQ_ERR_SUCCESS){
+      con->set_activity(MqttConnection::Activity::none);
+      
       EPRINT("Mosquitto publish failed with code %d\n", ret);
       return false ;
     }
+    con->set_mosquitto_mid(mid) ;
+    
   }else if(con->get_pub_topic_type()  == FLAG_DEFINED_TOPIC_ID){
     MqttTopic *topic = m_predefined_topics.get_topic(topicid);
     if (!topic){
       EPRINT("Predefined topic id %u unrecognised\n", topicid);
       buff[4] = MQTT_RETURN_INVALID_TOPIC ;
       writemqtt(sender_address, MQTT_PUBACK, buff, 5) ;
+      con->set_activity(MqttConnection::Activity::none);
       return false;
     }
     ret = mosquitto_publish(m_pmosquitto,
@@ -357,10 +351,12 @@ bool MqttSnRF24::server_publish(MqttConnection *con)
 			    con->get_pub_retain()) ;
     if (ret != MOSQ_ERR_SUCCESS){
       EPRINT("Mosquitto publish failed with code %d\n", ret);
+      con->set_activity(MqttConnection::Activity::none);
       buff[4] = MQTT_RETURN_CONGESTION ;
       writemqtt(sender_address, MQTT_PUBACK, buff, 5) ;
       return false ;
     }
+    con->set_mosquitto_mid(mid) ;
     
   }else{ // Normal Topic ID
     MqttTopic *topic = con->topics.get_topic(topicid) ;
@@ -368,6 +364,7 @@ bool MqttSnRF24::server_publish(MqttConnection *con)
       EPRINT("Client topic id %d unknown to gateway\n", topicid) ;
       buff[4] = MQTT_RETURN_INVALID_TOPIC ;
       writemqtt(sender_address, MQTT_PUBACK, buff, 5) ;
+      con->set_activity(MqttConnection::Activity::none);
       return false;
     }
     ret = mosquitto_publish(m_pmosquitto,
@@ -381,8 +378,10 @@ bool MqttSnRF24::server_publish(MqttConnection *con)
       EPRINT("Mosquitto publish failed with code %d\n", ret);
       buff[4] = MQTT_RETURN_CONGESTION ;
       writemqtt(sender_address, MQTT_PUBACK, buff, 5) ;
+      con->set_activity(MqttConnection::Activity::none);
       return false ;
     }
+    con->set_mosquitto_mid(mid) ;
     
   }
   return true ;
@@ -465,8 +464,8 @@ void MqttSnRF24::received_pubrel(uint8_t *sender_address, uint8_t *data, uint8_t
 
     con->update_activity() ;
     con->set_activity(MqttConnection::Activity::none) ; // reset activity
-    if (server_publish(con))
-      writemqtt(sender_address, MQTT_PUBCOMP, data, 2) ;
+
+    writemqtt(sender_address, MQTT_PUBCOMP, data, 2) ;
   }
 }
 
@@ -745,6 +744,19 @@ MqttConnection* MqttSnRF24::search_connection(const char *szclientid)
   for(p = m_connection_head; p != NULL; p=p->next){
     if (!p->is_disconnected()){
       if (p->client_id_match(szclientid)) break ;
+    }
+  }
+  return p ;
+}
+
+MqttConnection* MqttSnRF24::search_mosquitto_id(int mid)
+{
+  MqttConnection *p = NULL ;
+  for(p = m_connection_head; p != NULL; p=p->next){
+    if (p->is_connected() &&
+	p->get_activity() != MqttConnection::Activity::none &&
+	p->get_mosquitto_mid() == mid){
+      break;
     }
   }
   return p ;
@@ -1202,7 +1214,31 @@ void MqttSnRF24::gateway_publish_callback(struct mosquitto *m,
 						    int mid)
 {
   DPRINT("Mosquitto publish: message id = %d\n", mid) ;
+  if (data == NULL) return ;
   
+  MqttSnRF24 *gateway = (MqttSnRF24*)data ;
+  MqttConnection *con = gateway->search_mosquitto_id(mid) ;
+  if (!con) return ;
+
+  uint8_t buff[5] ; // Response buffer
+  uint16_t topicid = con->get_pub_topicid() ;
+  uint16_t messageid = con->get_pub_messageid() ;
+  buff[0] = topicid >> 8 ; // replicate topic id 
+  buff[1] = topicid & 0x00FF ; // replicate topic id 
+  buff[2] = messageid >> 8 ; // replicate message id
+  buff[3] = messageid & 0x00FF ; // replicate message id
+
+  switch(con->get_pub_qos()){
+  case 1:
+    buff[4] = MQTT_RETURN_ACCEPTED ;
+    gateway->writemqtt(con->get_address(), MQTT_PUBACK, buff, 5) ;
+    break ;
+  case 2:
+    gateway->writemqtt(con->get_address(), MQTT_PUBREC, buff+2, 2) ;
+    break ;
+  default:
+    EPRINT("Invalid QoS %d\n", con->get_pub_qos()) ;
+  }
 }
 
 void MqttSnRF24::gateway_disconnect_callback(struct mosquitto *m,
@@ -1782,8 +1818,10 @@ uint16_t MqttSnRF24::register_topic(const wchar_t *topic)
     // Register the topic. Return value is zero if topic is new
     ret = m_client_connection.topics.reg_topic(sztopic, mid) ;
     if(ret > 0){
+      DPRINT("reg_topic returned an existing topic ID %u\n", ret) ;
       return ret ; // already exists
     }
+    DPRINT("reg_topic has registered a new topic %u\n", mid) ;
     
     pthread_mutex_unlock(&m_rwlock) ;
     buff[0] = 0 ;

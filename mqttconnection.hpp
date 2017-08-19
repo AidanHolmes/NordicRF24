@@ -90,6 +90,8 @@ public:
 			uint8_t topictype,
 			int qos, int len, uint8_t *payload, bool retain) ;
 
+  void set_mosquitto_mid(int mid) ;
+  
   uint16_t get_pub_topicid();
   uint16_t get_pub_messageid() ;
   int get_pub_qos();
@@ -97,7 +99,7 @@ public:
   const uint8_t* get_pub_payload();
   bool get_pub_retain();
   uint8_t get_pub_topic_type() ;
-
+  int get_mosquitto_mid() ;
 
   void set_gwid(uint8_t gwid){m_gwid = gwid;}
   uint8_t get_gwid(){return m_gwid;}
@@ -138,6 +140,7 @@ protected:
   uint8_t m_tmppubmessage[MQTT_MESSAGE_MAX_BYTES+1] ;
   bool m_tmpretain ;
   uint8_t m_tmptopictype ;
+  int m_tmpmosmid ;
 
 
 };

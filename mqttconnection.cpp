@@ -134,6 +134,16 @@ bool MqttConnection::get_pub_retain()
   return m_tmpretain ;
 }
 
+void MqttConnection::set_mosquitto_mid(int mid)
+{
+  m_tmpmosmid = mid ;
+}
+
+int MqttConnection::get_mosquitto_mid()
+{
+  return m_tmpmosmid ;
+}
+
 
 
 
