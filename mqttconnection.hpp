@@ -114,6 +114,15 @@ public:
   time_t asleep_from ;
   uint16_t sleep_duration ;
   MqttTopicCollection topics ; // Public collection of topics
+
+  bool set_will_topic(char *topic, uint8_t qos, bool retain) ;
+  bool set_will_message(uint8_t *message, uint8_t len) ;
+  bool get_will_retain() ;
+  char* get_will_topic() ;
+  uint8_t* get_will_message();
+  size_t get_will_message_len();
+  uint8_t get_will_qos();
+  
 protected:
   uint8_t m_gwid ; // gw id for client connections
   time_t m_last_ping ;
@@ -142,6 +151,13 @@ protected:
   uint8_t m_tmptopictype ;
   int m_tmpmosmid ;
 
+  // Will
+  char m_willtopic[MQTT_TOPIC_MAX_BYTES+1] ;
+  uint8_t m_willmessage[MQTT_MESSAGE_MAX_BYTES] ;
+  size_t m_willtopicsize ;
+  size_t m_willmessagesize ;
+  uint8_t m_willtopicqos ;
+  bool m_willtopicretain ;
 
 };
 

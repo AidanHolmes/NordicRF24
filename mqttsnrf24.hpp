@@ -176,6 +176,7 @@ public:
   bool is_connected() ; // are we connected to any gateway?
   bool is_disconnected() ; // are we disconnected to any gateway?
   void set_willtopic(const wchar_t *topic, uint8_t qos) ;
+  void set_willmessage(const uint8_t *message, uint8_t len) ;
   void set_willmessage(const wchar_t *message) ;
 
   // Disconnect. Optional sleep duration can be set. If zero then
@@ -337,6 +338,10 @@ protected:
   // Returns false if the MQTT server cannot be processed
   bool server_publish(MqttConnection *con);
 
+  // Gateway function to send a WILL to the
+  // MQTT server
+  void send_will(MqttConnection *con) ;
+
   uint8_t m_broadcast[MAX_RF24_ADDRESS_LEN];
   uint8_t m_address[MAX_RF24_ADDRESS_LEN];
   char m_szclient_id[MAX_MQTT_CLIENTID+1] ; // Client ID
@@ -357,7 +362,7 @@ protected:
   //uint16_t m_connect_retries ;
   MqttConnection m_client_connection ;
   char m_willtopic[MQTT_TOPIC_MAX_BYTES+1] ;
-  char m_willmessage[MQTT_MESSAGE_MAX_BYTES+1] ;
+  uint8_t m_willmessage[MQTT_MESSAGE_MAX_BYTES] ;
   size_t m_willtopicsize ;
   size_t m_willmessagesize ;
   uint8_t m_willtopicqos ;

@@ -996,7 +996,6 @@ void MqttSnRF24::received_willtopic(uint8_t *sender_address, uint8_t *data, uint
 {
   if (m_mqtt_type == gateway){
     char utf8[MQTT_TOPIC_MAX_BYTES+1] ;
-    wchar_t topic[MQTT_TOPIC_MAX_BYTES+1] ;
 
     MqttConnection *con = search_connection_address(sender_address) ;
     uint8_t buff[1] ;
@@ -1011,20 +1010,18 @@ void MqttSnRF24::received_willtopic(uint8_t *sender_address, uint8_t *data, uint
     
     memcpy(utf8, data+1, len-1) ;
     utf8[len-1] = '\0' ;
-    size_t ret = mbrtowc(topic, utf8, MQTT_TOPIC_MAX_BYTES, NULL) ;
-    if (ret < 0){
-      con->set_state(MqttConnection::State::disconnected) ;
-      buff[0] = MQTT_RETURN_NOT_SUPPORTED ; // Assume something unsupported happened
-      writemqtt(sender_address, MQTT_CONNACK, buff, 1) ;
-      EPRINT("WILLTOPIC failed to convert utf8 topic string\n") ;
-      return ;
-    }
+    
     uint8_t qos = 0;
+    bool retain = (data[0] & FLAG_RETAIN) ;
     if (data[0] & FLAG_QOS1) qos = 1;
     else if (data[0] & FLAG_QOS2) qos =2 ;
     
-    DPRINT("WILLTOPIC: QOS = %u, Topic = %s\n", qos, utf8) ;
+    DPRINT("WILLTOPIC: QOS = %u, Topic = %s, Retain = %s\n", qos, utf8, retain?"Yes":"No") ;
 
+    if (!con->set_will_topic(utf8, qos, retain)){
+      EPRINT("WILLTOPIC: Failed to set will topic for connection!\n") ;
+    }
+    
     writemqtt(sender_address, MQTT_WILLMSGREQ, NULL, 0) ;
   }
 }
@@ -1054,8 +1051,7 @@ void MqttSnRF24::received_willmsgreq(uint8_t *sender_address, uint8_t *data, uin
 void MqttSnRF24::received_willmsg(uint8_t *sender_address, uint8_t *data, uint8_t len)
 {
   if (m_mqtt_type == gateway){
-    char utf8[MQTT_MESSAGE_MAX_BYTES+1] ;
-    wchar_t message[MQTT_MESSAGE_MAX_BYTES+1] ;
+    uint8_t utf8[MQTT_MESSAGE_MAX_BYTES] ;
 
     MqttConnection *con = search_connection_address(sender_address) ;
     uint8_t buff[1] ;
@@ -1068,17 +1064,11 @@ void MqttSnRF24::received_willmsg(uint8_t *sender_address, uint8_t *data, uint8_
 
     memcpy(utf8, data, len) ;
     utf8[len] = '\0' ;
-    size_t ret = mbrtowc(message, utf8, MQTT_MESSAGE_MAX_BYTES, NULL) ;
-    if (ret < 0){
-      // Conversion failed
-      EPRINT("WILLMSG: failed to convert message from UTF8\n") ;
-      con->set_state(MqttConnection::State::disconnected) ;
-      buff[0] = MQTT_RETURN_NOT_SUPPORTED ; // Assume something unsupported happened
-      writemqtt(sender_address, MQTT_CONNACK, buff, 1) ;
-      return ;
-    }
     
     DPRINT("WILLMESSAGE: Message = %s\n", utf8) ;
+    if (!con->set_will_message(utf8, len)){
+      EPRINT("WILLMESSAGE: Failed to set the will message for connection!\n") ;
+    }
 
     // Client sent final will message
     complete_client_connection(con) ;
@@ -1397,6 +1387,23 @@ void MqttSnRF24::manage_gw_connection()
   }
 }
 
+void MqttSnRF24::send_will(MqttConnection *con)
+{
+  if (!m_mosquitto_initialised) return ; // cannot process
+
+  int mid = 0 ;
+  int ret = mosquitto_publish(m_pmosquitto,
+			      &mid,
+			      con->get_will_topic(),
+			      con->get_will_message_len(),
+			      con->get_will_message(),
+			      con->get_will_qos(),
+			      con->get_will_retain()) ;
+  if (ret != MOSQ_ERR_SUCCESS){
+    EPRINT("Sending WILL: Mosquitto publish failed with code %d\n", ret);
+  }
+}
+
 void MqttSnRF24::manage_client_connection(MqttConnection *p)
 {
   if (p->lost_contact()){
@@ -1406,6 +1413,7 @@ void MqttSnRF24::manage_client_connection(MqttConnection *p)
     // Attempt to send a disconnect
     DPRINT("Disconnecting lost client: %s\n", p->get_client_id()) ;
     writemqtt(p->get_address(), MQTT_DISCONNECT, NULL, 0) ;
+    if (m_willtopicsize > 0) send_will(p) ;
     return ;
   }else{
     // Connection should be valid
@@ -2117,31 +2125,26 @@ void MqttSnRF24::set_willtopic(const wchar_t *topic, uint8_t qos)
 
 void MqttSnRF24::set_willmessage(const wchar_t *message)
 {
-  if (message == NULL){
-    m_willmessage[0] = '\0' ;
+  char utf8str[MQTT_MESSAGE_MAX_BYTES+1] ;
+  size_t maxlen = (MQTT_MESSAGE_SAFE_BYTES + (MAX_RF24_ADDRESS_LEN - m_address_len)) ;
+
+  size_t len = wchar_to_utf8(message, utf8str, maxlen) ;
+  set_willmessage((uint8_t*)utf8str, len) ;
+}
+
+void MqttSnRF24::set_willmessage(const uint8_t *message, uint8_t len)
+{
+  if (message == NULL || len == 0){
     m_willmessagesize = 0 ;
+    return ;
   }
   
-  size_t len = wcslen(message) ;
   if (len > (unsigned)(MQTT_MESSAGE_SAFE_BYTES + (MAX_RF24_ADDRESS_LEN - m_address_len)))
-    throw MqttOutOfRange("message too long for payload") ;
+    throw MqttOutOfRange("WILL message too long for payload") ;
 
-  char *curlocale = setlocale(LC_CTYPE, NULL);
-  
-  if (!setlocale(LC_CTYPE, "en_GB.UTF-8")){
-    throw MqttOutOfRange("cannot set UTF locale") ;
-  }
-    
-  size_t ret = wcstombs(m_willmessage, message, (MQTT_MESSAGE_SAFE_BYTES + (MAX_RF24_ADDRESS_LEN - m_address_len))) ;
+  memcpy(m_willmessage, message, len) ;
 
-  setlocale(LC_CTYPE, curlocale) ; // reset locale
-  
-  if (ret < 0){
-    DPRINT("Throwing exception - cannot convert will message to UTF-8\n") ;
-    throw MqttOutOfRange("message string conversion error") ;
-  }
-
-  m_willmessagesize = ret ;
+  m_willmessagesize = len ;
 }
 
 MqttGwInfo* MqttSnRF24::get_available_gateway()

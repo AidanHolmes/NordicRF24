@@ -32,6 +32,11 @@ MqttConnection::MqttConnection(){
   m_lasttry = 0 ;
   m_message_cache_len = 0 ;
   m_message_cache_id = 0 ;
+  m_willtopicretain = false ;
+  m_willtopicqos = 0 ;
+  m_willtopicsize = 0 ;
+  m_willmessagesize = 0 ;
+  m_willtopic[0] = '\0' ;
 }
 void MqttConnection::update_activity()
 {
@@ -143,6 +148,66 @@ int MqttConnection::get_mosquitto_mid()
 {
   return m_tmpmosmid ;
 }
+
+bool MqttConnection::set_will_topic(char *topic, uint8_t qos, bool retain)
+{
+  if (!topic){
+    m_willtopic[0] = '\0' ;
+    m_willtopicsize = 0 ;
+    m_willmessage[0] = '\0';
+    m_willmessagesize = 0;
+  }else{
+    size_t len = strlen(topic) ;
+    if (len > MQTT_TOPIC_MAX_BYTES) return false ;
+  
+    memcpy(m_willtopic, topic, len) ;
+    m_willtopicsize = len ;
+  }
+  m_willtopicqos = qos ;
+  m_willtopicretain = retain ;
+  return true ;
+}
+
+bool MqttConnection::set_will_message(uint8_t *message, uint8_t len)
+{
+  if (!message || len == 0){
+    m_willmessagesize = 0;
+  }else{
+    if (len > (unsigned)(MQTT_MESSAGE_SAFE_BYTES + (MAX_RF24_ADDRESS_LEN - m_address_len)))
+      return false ;
+  
+    memcpy(m_willmessage, message, len) ;
+    m_willmessagesize = len ;
+  }
+  return true ;  
+}
+
+bool MqttConnection::get_will_retain()
+{
+  return m_willtopicretain;
+}
+
+char *MqttConnection::get_will_topic()
+{
+  return m_willtopic ;
+}
+
+size_t MqttConnection::get_will_message_len()
+{
+  return m_willmessagesize ;
+}
+
+uint8_t *MqttConnection::get_will_message()
+{
+  return m_willmessage ;
+}
+
+uint8_t MqttConnection::get_will_qos()
+{
+  return m_willtopicqos ;
+}
+
+
 
 
 
