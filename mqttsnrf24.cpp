@@ -1392,15 +1392,17 @@ void MqttSnRF24::send_will(MqttConnection *con)
   if (!m_mosquitto_initialised) return ; // cannot process
 
   int mid = 0 ;
-  int ret = mosquitto_publish(m_pmosquitto,
-			      &mid,
-			      con->get_will_topic(),
-			      con->get_will_message_len(),
-			      con->get_will_message(),
-			      con->get_will_qos(),
-			      con->get_will_retain()) ;
-  if (ret != MOSQ_ERR_SUCCESS){
-    EPRINT("Sending WILL: Mosquitto publish failed with code %d\n", ret);
+  if (strlen(con->get_will_topic()) > 0){
+    int ret = mosquitto_publish(m_pmosquitto,
+				&mid,
+				con->get_will_topic(),
+				con->get_will_message_len(),
+				con->get_will_message(),
+				con->get_will_qos(),
+				con->get_will_retain()) ;
+    if (ret != MOSQ_ERR_SUCCESS){
+      EPRINT("Sending WILL: Mosquitto publish failed with code %d\n", ret);
+    }
   }
 }
 
@@ -1413,7 +1415,7 @@ void MqttSnRF24::manage_client_connection(MqttConnection *p)
     // Attempt to send a disconnect
     DPRINT("Disconnecting lost client: %s\n", p->get_client_id()) ;
     writemqtt(p->get_address(), MQTT_DISCONNECT, NULL, 0) ;
-    if (m_willtopicsize > 0) send_will(p) ;
+    send_will(p) ;
     return ;
   }else{
     // Connection should be valid

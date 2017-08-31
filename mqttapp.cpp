@@ -159,6 +159,7 @@ int main(int argc, char **argv)
     return 1 ;
   }
   
+  mqtt.reset_rf24();
   mqtt.auto_update(true);
 
   // Link layer specific options
@@ -245,7 +246,7 @@ int main(int argc, char **argv)
   }
 
   mqtt.reset_rf24();
-  pi.output(opt_ce, IHardwareGPIO::low);
+  pi.output(opt_ce, IHardwareGPIO::ow);
 
   return 0 ;
 }
