@@ -148,11 +148,16 @@ public:
   void set_gateway_id(const uint8_t gwid){m_gwid = gwid;}
   uint8_t get_gateway_id(){return m_gwid;}
 
+  // Server call
+  // Create a pre-defined topic. 2 options to add wide char or UTF8 string
+  bool create_predefined_topic(uint16_t topicid, const char *name) ;
+  bool create_predefined_topic(uint16_t topicid, const wchar_t *name) ;
+  
   // Set a client ID. This can be up to MAX_MQTT_CLIENTID.
   // String must be null terminated.
   // Will throw MqttOutOfRange if string is over MAX_MQTT_CLIENTID
   void set_client_id(const char *szclientid) ;
-  const char* get_client_id() ; // Returns pointer to class objects identfier
+  const char* get_client_id() ; // Returns pointer to client identfier
 
   //////////////////////////////////////
   // MQTT messages
@@ -188,8 +193,8 @@ public:
   // This call publishes short topics (2 bytes).
   // Requires a known gateway (requires manual specification of GW)
   bool publish_noqos(uint8_t gwid,
-		     char* sztopic,
-		     uint8_t *payload,
+		     const char* sztopic,
+		     const uint8_t *payload,
 		     uint8_t payload_len,
 		     bool retain) ;
 
@@ -198,7 +203,7 @@ public:
   bool publish_noqos(uint8_t gwid,
 		     uint16_t topicid,
 		     uint8_t topictype,
-		     uint8_t *payload,
+		     const uint8_t *payload,
 		     uint8_t payload_len,
 		     bool retain);
   
@@ -227,10 +232,6 @@ public:
   // Register a topic to a client. Returns false if failed
   bool register_topic(MqttConnection *con, MqttTopic *t);
 
-  // Server call
-  // Create a pre-defined topic
-  bool create_predefined_topic(uint16_t topicid, const wchar_t *name) ;
-  
   // Handles connections to gateways or to clients. Dispatches queued messages
   // Will return false if a queued message cannot be dispatched.
   bool manage_connections() ;

@@ -232,7 +232,7 @@ int main(int argc, char **argv)
 	      mqtt.publish(id, 2, true, (uint8_t*)"123", 3) ;
 	      uint8_t mqttdat[sizeof(time_t)];
 	      time_t now = time(NULL) ;
-	      for(int timedat=0; timedat < sizeof(time_t); timedat++)
+	      for(unsigned int timedat=0; timedat < sizeof(time_t); timedat++)
 		mqttdat[timedat] = now >> (8*timedat);
 	      mqtt.publish_noqos(gwhandle, "AZ", mqttdat, sizeof(time_t), false);
 	    }
@@ -246,7 +246,7 @@ int main(int argc, char **argv)
   }
 
   mqtt.reset_rf24();
-  pi.output(opt_ce, IHardwareGPIO::ow);
+  pi.output(opt_ce, IHardwareGPIO::low);
 
   return 0 ;
 }

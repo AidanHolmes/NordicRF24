@@ -8,9 +8,9 @@
 class MqttTopic{
 public:
   MqttTopic(){reset();}
-  MqttTopic(uint16_t topic, uint16_t mid, char *sztopic){reset();set_topic(topic, mid, sztopic);}
+  MqttTopic(uint16_t topic, uint16_t mid, const char *sztopic){reset();set_topic(topic, mid, sztopic);}
 
-  void set_topic(uint16_t topic, uint16_t messageid, char *sztopic) ;
+  void set_topic(uint16_t topic, uint16_t messageid, const char *sztopic) ;
   void reset() ;
   bool registration_expired(){return (m_registered_at + m_timeout) < time(NULL);}
   bool is_head(){return !m_prev;}
@@ -45,15 +45,15 @@ public:
   
   // Client connection will register that it is creating a topic
   // Needs to be formally added with a complete_topic call
-  uint16_t reg_topic(char *sztopic, uint16_t messageid) ;
+  uint16_t reg_topic(const char *sztopic, uint16_t messageid) ;
   // Server adds the topic. a call to complete_topic is not required when a
   // server adds a topic.
   // Will return a new Topic ID or if the topic already exists, the existing Topic ID
-  uint16_t add_topic(char *sztopic, uint16_t messageid=0) ;
+  uint16_t add_topic(const char *sztopic, uint16_t messageid=0) ;
 
   // Add a topic to the collection with a specific topic ID
   // returns false if the topic ID has already been allocated
-  bool create_topic(char *sztopic, uint16_t topicid) ;
+  bool create_topic(const char *sztopic, uint16_t topicid) ;
   
   // Client call to complete topic and update topicid. Returns false if not found
   bool complete_topic(uint16_t messageid, uint16_t topicid) ;

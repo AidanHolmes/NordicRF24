@@ -1791,6 +1791,15 @@ bool MqttSnRF24::register_topic(MqttConnection *con, MqttTopic *t)
   return false ;
 }
 
+bool MqttSnRF24::create_predefined_topic(uint16_t topicid, const char *name)
+{
+  if (strlen(name) > (unsigned)(MQTT_TOPIC_SAFE_BYTES + (MAX_RF24_ADDRESS_LEN - m_address_len))){
+    DPRINT("Throwing exception - pre-defined topic too long\n") ;
+    throw MqttOutOfRange("Pre-defined topic too long\n") ;
+  }
+  return m_predefined_topics.create_topic(name, topicid) ;
+}
+
 bool MqttSnRF24::create_predefined_topic(uint16_t topicid, const wchar_t *name)
 {
   char sztopic[MQTT_TOPIC_MAX_BYTES] ;
@@ -1804,8 +1813,7 @@ bool MqttSnRF24::create_predefined_topic(uint16_t topicid, const wchar_t *name)
     throw ;
   }
   
-  m_predefined_topics.add_topic(sztopic, topicid) ;
-  return true ;
+  return m_predefined_topics.create_topic(sztopic, topicid) ;
 }
 
 uint16_t MqttSnRF24::register_topic(const wchar_t *topic)
@@ -1931,7 +1939,7 @@ bool MqttSnRF24::disconnect(uint16_t sleep_duration)
   return false ; // failed to send the diconnect
 }
 
-bool MqttSnRF24::publish_noqos(uint8_t gwid, char* sztopic, uint8_t *payload, uint8_t payload_len, bool retain)
+bool MqttSnRF24::publish_noqos(uint8_t gwid, const char* sztopic, const uint8_t *payload, uint8_t payload_len, bool retain)
 {
   uint16_t topicid = 0;
   // This will send Qos -1 messages with a short topic
@@ -1943,7 +1951,7 @@ bool MqttSnRF24::publish_noqos(uint8_t gwid, char* sztopic, uint8_t *payload, ui
 		       payload, payload_len, retain) ;
 }
 
-bool MqttSnRF24::publish_noqos(uint8_t gwid, uint16_t topicid, uint8_t topictype, uint8_t *payload, uint8_t payload_len, bool retain)
+bool MqttSnRF24::publish_noqos(uint8_t gwid, uint16_t topicid, uint8_t topictype, const uint8_t *payload, uint8_t payload_len, bool retain)
 {
   uint8_t buff[MQTT_PAYLOAD_WIDTH-2] ;
   buff[0] = (retain?FLAG_RETAIN:0) | FLAG_QOSN1 | topictype ;
@@ -2209,4 +2217,5 @@ bool MqttSnRF24::get_known_gateway(uint8_t *gwid)
 
   return true ;
 }
+
 

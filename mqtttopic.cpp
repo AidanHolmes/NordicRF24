@@ -10,7 +10,7 @@
 #define EPRINT(x,...)
 #endif
 
-void MqttTopic::set_topic(uint16_t topic, uint16_t messageid, char *sztopic)
+void MqttTopic::set_topic(uint16_t topic, uint16_t messageid, const char *sztopic)
 {
   m_topicid = topic ;
   strncpy(m_sztopic, sztopic, MQTT_TOPIC_MAX_BYTES) ;
@@ -42,7 +42,7 @@ MqttTopicCollection::~MqttTopicCollection()
   free_topics() ;
 }
 
-uint16_t MqttTopicCollection::reg_topic(char *sztopic, uint16_t messageid)
+uint16_t MqttTopicCollection::reg_topic(const char *sztopic, uint16_t messageid)
 {
   MqttTopic *p = NULL, *insert_at = NULL ;
   if (!topics){
@@ -78,7 +78,7 @@ bool MqttTopicCollection::complete_topic(uint16_t messageid, uint16_t topicid)
   return false ;
 }
 
-bool MqttTopicCollection::create_topic(char *sztopic, uint16_t topicid)
+bool MqttTopicCollection::create_topic(const char *sztopic, uint16_t topicid)
 {
   MqttTopic *p = NULL, *insert_at = NULL ;
   uint16_t available_id = 0 ;
@@ -111,7 +111,7 @@ bool MqttTopicCollection::create_topic(char *sztopic, uint16_t topicid)
   return true ;
 }
 
-uint16_t MqttTopicCollection::add_topic(char *sztopic, uint16_t messageid)
+uint16_t MqttTopicCollection::add_topic(const char *sztopic, uint16_t messageid)
 {
   MqttTopic *p = NULL, *insert_at = NULL ;
   uint16_t available_id = 0 ;
