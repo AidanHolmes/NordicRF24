@@ -279,7 +279,7 @@ NordicRF24::~NordicRF24()
 {
   // Support for multi-instances but isn't thread safe or practical since
   // hardware is a single instance
-  for (std::vector<NordicRF24*>::iterator i; i != radio_instances.end(); i++){
+  for (std::vector<NordicRF24*>::iterator i= radio_instances.begin(); i != radio_instances.end(); ++i){
     if (*i == this){
       radio_instances.erase(i) ;
       break;
