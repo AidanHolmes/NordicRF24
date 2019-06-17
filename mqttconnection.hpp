@@ -1,4 +1,4 @@
-//   Copyright 2017 Aidan Holmes
+//   Copyright 2019 Aidan Holmes
 
 //   Licensed under the Apache License, Version 2.0 (the "License");
 //   you may not use this file except in compliance with the License.
@@ -27,7 +27,7 @@ public:
     connecting, disconnecting // transition states
   };
   enum Activity{
-    none, willtopic, willmessage, registering, publishing, subscribing
+    none, willtopic, willmessage, registering, registeringall, publishing, subscribing
   };
   
   MqttConnection() ;
@@ -114,7 +114,7 @@ public:
   time_t asleep_from ;
   uint16_t sleep_duration ;
   MqttTopicCollection topics ; // Public collection of topics
-
+  
   bool set_will_topic(char *topic, uint8_t qos, bool retain) ;
   bool set_will_message(uint8_t *message, uint8_t len) ;
   bool get_will_retain() ;

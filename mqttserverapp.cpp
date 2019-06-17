@@ -1,4 +1,4 @@
-//   Copyright 2017 Aidan Holmes
+//   Copyright 2019 Aidan Holmes
 //   Licensed under the Apache License, Version 2.0 (the "License");
 //   you may not use this file except in compliance with the License.
 //   You may obtain a copy of the License at
@@ -11,7 +11,7 @@
 //   See the License for the specific language governing permissions and
 //   limitations under the License.
 
-#include "mqttsnrf24.hpp"
+#include "servermqtt.hpp"
 #include "wpihardware.hpp"
 #include "spihardware.hpp"
 #include "radioutil.h"
@@ -24,11 +24,10 @@
 #define ADDR_WIDTH 5
 
 wPi pi ;
-MqttSnRF24 *pradio = NULL;
+ServerMqttSnRF24 *pradio = NULL;
 
 int opt_irq = 0,
   opt_ce = 0,
-  opt_gw = 0,
   opt_channel = 0,
   opt_cname = 0,
   opt_speed = 1,
@@ -47,18 +46,17 @@ void siginterrupt(int sig)
 
 int main(int argc, char **argv)
 {
-  const char usage[] = "Usage: %s -c ce -i irq -a address -b address [-n clientname] [-o channel] [-s 250|1|2] [-x] [-g]\n" ;
-  const char optlist[] = "i:c:o:a:b:s:n:gx" ;
+  const char usage[] = "Usage: %s -c ce -i irq -a address -b address [-o channel] [-s 250|1|2] [-x]\n" ;
+  const char optlist[] = "i:c:o:a:b:s:x" ;
   int opt = 0 ;
   uint8_t rf24address[ADDR_WIDTH] ;
   uint8_t rf24broadcast[ADDR_WIDTH] ;
   bool baddr = false;
   bool bbroad = false ;
-  char szclientid[MAX_MQTT_CLIENTID+1] ;
   
   struct sigaction siginthandle ;
 
-  MqttSnRF24 mqtt ;
+  ServerMqttSnRF24 mqtt ;
 
   pradio = &mqtt;
 
@@ -76,9 +74,6 @@ int main(int argc, char **argv)
     case 'x': //ack
       opt_ack = 1 ;
       break ;
-    case 'g': // gateway
-      opt_gw = 1;
-      break;
     case 'i': // IRQ pin
       opt_irq = atoi(optarg) ;
       break ;
@@ -104,10 +99,6 @@ int main(int argc, char **argv)
 	return EXIT_FAILURE ;
       }
       bbroad = true ;
-      break;
-    case 'n': // client name
-      strncpy(szclientid, optarg, MAX_MQTT_CLIENTID) ;
-      opt_cname = 1 ;
       break;
     default: // ? opt
       fprintf(stderr, usage, argv[0]);
@@ -172,81 +163,20 @@ int main(int argc, char **argv)
   mqtt.set_2_byte_crc(true) ;
   mqtt.set_data_rate(opt_speed) ; 
 
-  if (opt_gw){
-    mqtt.set_gateway_id(88) ;
-  }else{
-    if (opt_cname)
-      mqtt.set_client_id(szclientid);
-    else
-      mqtt.set_client_id("CL") ;
-  }
+  mqtt.set_gateway_id(88) ;
 
-  mqtt.initialise(opt_gw?MqttSnRF24::gateway:MqttSnRF24::client, ADDR_WIDTH, rf24broadcast, rf24address) ;
+  mqtt.initialise(ADDR_WIDTH, rf24broadcast, rf24address) ;
 
   print_state(&mqtt) ;  
   
-  time_t now = time(NULL) ;
-  time_t last_search = 0, last_register = 0 ;
-  const uint16_t search_interval = 5 ; // sec
-  const uint16_t ping_interval = 30 ; // sec
-  bool ret = false ;
-  bool gateway_known = false ;
-  uint8_t gwhandle =0;
-  
   // Working loop
   for ( ; ; ){
-    now = time(NULL) ;
-    if (opt_gw){
-      // Nowt
-    }else{ // client
-      if (!gateway_known){
-	// Send a search request
-	if (last_search+search_interval < now){
-	  printf ("sending searchgw - ") ;
-	  ret = mqtt.searchgw(1) ;
-	  printf ("%s\n", ret?"ok":"failed") ;
-	  last_search = now ;
-	}
-	
-	// Check for responses
-	gateway_known = mqtt.get_known_gateway(&gwhandle) ;
-      }else{
-	// Known gateway. Check if the gateway is alive and connected
-	if (mqtt.is_disconnected()){
-	  printf("Connecting...\n") ;
-	  mqtt.set_willtopic(L"a/b/c/d", 0) ;
-	  mqtt.set_willmessage(L"Hello World\x00A9") ;
 
-	  try{
-	    if (mqtt.connect(gwhandle, true, true, ping_interval))
-	      printf("Sending connect to %u\n", gwhandle) ;
-	  }catch (MqttConnectErr &e){
-	    printf("Cannot connect: %s\n", e.what()) ;
-	    gateway_known = false ;
-	  }
-	}else if (mqtt.is_connected(gwhandle)){ // Connected
-	  if (last_register+10 < now){
-	    uint16_t id ;
-	    if ((id=mqtt.register_topic(L"IT/IS/A/baby"))){
-	      // id created
-	      mqtt.publish(id, 2, true, (uint8_t*)"123", 3) ;
-	      uint8_t mqttdat[sizeof(time_t)];
-	      time_t now = time(NULL) ;
-	      for(unsigned int timedat=0; timedat < sizeof(time_t); timedat++)
-		mqttdat[timedat] = now >> (8*timedat);
-	      mqtt.publish_noqos(gwhandle, "AZ", mqttdat, sizeof(time_t), false);
-	    }
-	    last_register = now ;
-	  }
-	}
-      }
-    }
     mqtt.manage_connections() ;
     nano_sleep(0, 5000000) ; // 5ms wait
   }
 
   mqtt.reset_rf24();
-  pi.output(opt_ce, IHardwareGPIO::low);
 
   return 0 ;
 }
