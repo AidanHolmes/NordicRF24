@@ -7,7 +7,7 @@ CFLAGS = $(CXXFLAGS)
 LIBS = -lwiringPi -lpihw -lpthread
 LDFLAGS = -I$(HWLIBS) -L$(HWLIBS)
 
-SRCS_MQTTCLIENT = mqttclientapp.cpp clientmqtt.cpp mqttsnrf24.cpp bufferedrf24.cpp rpinrf24.cpp mqttconnection.cpp mqtttopic.cpp
+SRCS_MQTTCLIENT = mqttclientapp.cpp clientmqtt.cpp mqttsnrf24.cpp bufferedrf24.cpp rpinrf24.cpp mqttconnection.cpp mqtttopic.cpp command.cpp
 OBJS_MQTTCLIENT = $(SRCS_MQTTCLIENT:.cpp=.o) 
 
 SRCS_MQTTSERVER = mqttserverapp.cpp servermqtt.cpp mqttsnrf24.cpp bufferedrf24.cpp rpinrf24.cpp mqttconnection.cpp mqtttopic.cpp

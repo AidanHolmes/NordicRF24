@@ -15,11 +15,13 @@
 #include "wpihardware.hpp"
 #include "spihardware.hpp"
 #include "radioutil.h"
+#include "command.hpp"
 #include <stdio.h>
 #include <unistd.h>
 #include <string.h>
 #include <signal.h>
 #include <stdlib.h>
+#include <sys/select.h>
 
 #define ADDR_WIDTH 5
 
@@ -34,6 +36,19 @@ int opt_irq = 0,
   opt_speed = 1,
   opt_ack = 0;
 
+
+bool inputAvailable()
+{
+  struct timeval tv;
+  fd_set fds;
+  tv.tv_sec = 0;
+  tv.tv_usec = 0;
+  FD_ZERO(&fds);
+  FD_SET(STDIN_FILENO, &fds);
+  select(STDIN_FILENO+1, &fds, NULL, NULL, &tv);
+  return (FD_ISSET(0, &fds));
+}
+
 void siginterrupt(int sig)
 {
   printf("\nExiting and resetting radio\n") ;
@@ -43,6 +58,33 @@ void siginterrupt(int sig)
     pradio->reset_rf24() ;
   }
   exit(EXIT_SUCCESS) ;
+}
+
+void connect()
+{
+  uint8_t gw = 0;
+  
+  if (!pradio->get_known_gateway(&gw)){
+    printf("Cannot connect, no known gateway\n") ;
+    return;
+  }
+
+  try{
+    if (!pradio->connect(gw, true, true, 10)){
+      printf("Connecting to gateway %u\n", gw) ;
+    }
+  }catch(MqttConnectErr &e){
+    printf("Cannot connect: %s\n", e.what()) ;
+  }
+}
+
+void search()
+{
+  if(pradio->searchgw(1)){
+    printf("Sending gateway search...\n");
+  }else{
+    printf("Failed to send search!\n");
+  }
 }
 
 int main(int argc, char **argv)
@@ -55,6 +97,10 @@ int main(int argc, char **argv)
   bool baddr = false;
   bool bbroad = false ;
   char szclientid[MAX_MQTT_CLIENTID+1] ;
+  Command commands[] = {Command("connect",&connect,true),
+			Command("disconnect",NULL,true),
+			Command("topic",NULL,true),
+			Command("search",&search,true)} ;
   
   struct sigaction siginthandle ;
 
@@ -190,48 +236,24 @@ int main(int argc, char **argv)
   for ( ; ; ){
     now = time(NULL) ;
 
-    if (!gateway_known){
-      // Send a search request
-      if (last_search+search_interval < now){
-	printf ("sending searchgw - ") ;
-	ret = mqtt.searchgw(1) ;
-	printf ("%s\n", ret?"ok":"failed") ;
-	last_search = now ;
-      }
-	
-      // Check for responses
-      gateway_known = mqtt.get_known_gateway(&gwhandle) ;
-    }else{
-      // Known gateway. Check if the gateway is alive and connected
-      if (mqtt.is_disconnected()){
-	printf("Connecting...\n") ;
-	mqtt.set_willtopic(L"a/b/c/d", 0) ;
-	mqtt.set_willmessage(L"Hello World\x00A9") ;
-
-	try{
-	  if (mqtt.connect(gwhandle, true, true, ping_interval))
-	    printf("Sending connect to %u\n", gwhandle) ;
-	}catch (MqttConnectErr &e){
-	  printf("Cannot connect: %s\n", e.what()) ;
-	  gateway_known = false ;
-	}
-      }else if (mqtt.is_connected(gwhandle)){ // Connected
-	if (last_register+10 < now){
-	  uint16_t id ;
-	  if ((id=mqtt.register_topic(L"IT/IS/A/baby"))){
-	    // id created
-	    mqtt.publish(id, 2, true, (uint8_t*)"123", 3) ;
-	    uint8_t mqttdat[sizeof(time_t)];
-	    time_t now = time(NULL) ;
-	    for(unsigned int timedat=0; timedat < sizeof(time_t); timedat++)
-	      mqttdat[timedat] = now >> (8*timedat);
-	    mqtt.publish_noqos(gwhandle, "AZ", mqttdat, sizeof(time_t), false);
+    while (inputAvailable()){
+      char c;
+      read(STDIN_FILENO, &c, 1);
+      switch(c){
+      case ' ':
+	break;
+      default:
+	for (int i=0; i < 4; i++){
+	  if(commands[i].found(c)){
+	    commands[i].cmd();
+	    commands[i].reset();
 	  }
-	  last_register = now ;
 	}
+	break;
       }
+      // write(STDOUT_FILENO, &c, 1);
     }
- 
+    
     mqtt.manage_connections() ;
     nano_sleep(0, 5000000) ; // 5ms wait
   }
