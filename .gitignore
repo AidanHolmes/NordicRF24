@@ -5,6 +5,8 @@ rf24mqtt
 rf24send
 rf24cmd
 rf24ping
+mqttsnserver
+mqttsnclient
 
 # Compiled Object files
 *.slo
