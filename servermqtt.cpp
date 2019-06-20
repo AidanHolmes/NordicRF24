@@ -1,4 +1,4 @@
-//   Copyright 2017 Aidan Holmes
+//   Copyright 2019 Aidan Holmes
 
 //   Licensed under the Apache License, Version 2.0 (the "License");
 //   you may not use this file except in compliance with the License.
@@ -589,6 +589,7 @@ void ServerMqttSnRF24::received_connect(uint8_t *sender_address, uint8_t *data, 
 
   if (will){
     // Start with will topic request
+    con->set_activity(MqttConnection::Activity::willtopic);
     writemqtt(sender_address, MQTT_WILLTOPICREQ, NULL, 0) ;
   }else{
     // No need for WILL setup, just CONNACK
@@ -633,7 +634,21 @@ void ServerMqttSnRF24::received_willtopic(uint8_t *sender_address, uint8_t *data
   }
   
   con->update_activity() ; // update known client activity
-    
+  if (con->get_state() != MqttConnection::State::connecting ||
+      con->get_activity() != MqttConnection::Activity::willtopic){
+    // WILLTOPIC is only used during connection setup. This is out of sequence
+    DPRINT("Out of sequence WILLTOPIC received\n") ;
+    return ;
+  }
+
+  if (len == 0){
+    // Client indicated a will but didn't send one
+    // Complete connection and leave will unset
+    con->set_will_topic(NULL,0,false);
+    buff[0] = MQTT_RETURN_ACCEPTED ;
+    complete_client_connection(con) ;
+    writemqtt(sender_address, MQTT_CONNACK, buff, 1) ;
+  }
   memcpy(utf8, data+1, len-1) ;
   utf8[len-1] = '\0' ;
     
@@ -647,7 +662,7 @@ void ServerMqttSnRF24::received_willtopic(uint8_t *sender_address, uint8_t *data
   if (!con->set_will_topic(utf8, qos, retain)){
     EPRINT("WILLTOPIC: Failed to set will topic for connection!\n") ;
   }
-    
+  con->set_activity(MqttConnection::Activity::willmessage);
   writemqtt(sender_address, MQTT_WILLMSGREQ, NULL, 0) ;
 
 }
@@ -665,14 +680,31 @@ void ServerMqttSnRF24::received_willmsg(uint8_t *sender_address, uint8_t *data, 
     return ;
   }
 
-  memcpy(utf8, data, len) ;
-  utf8[len] = '\0' ;
-    
-  DPRINT("WILLMESSAGE: Message = %s\n", utf8) ;
-  if (!con->set_will_message(utf8, len)){
-    EPRINT("WILLMESSAGE: Failed to set the will message for connection!\n") ;
+  con->update_activity() ; // update known client activity
+  if (con->get_state() != MqttConnection::State::connecting ||
+      con->get_activity() != MqttConnection::Activity::willmessage){
+    // WILLMSG is only used during connection setup. This is out of sequence
+    DPRINT("Out of sequence WILLMSG received\n") ;
+    return ;
   }
 
+  if (len == 0){
+    // No message set for topic. This is a protocol error, but should be handled by server
+    // Remove will topic
+    con->set_will_topic(NULL,0,false);    
+    // Don't set a will message
+    con->set_will_message(NULL, 0) ;
+  }else{
+  
+    memcpy(utf8, data, len) ;
+    utf8[len] = '\0' ;
+    
+    DPRINT("WILLMESSAGE: Message = %s\n", utf8) ;
+    if (!con->set_will_message(utf8, len)){
+      EPRINT("WILLMESSAGE: Failed to set the will message for connection!\n") ;
+    }
+  }
+  // TO DO: Check state, handle if connecting or connected!
   // Client sent final will message
   complete_client_connection(con) ;
   buff[0] = MQTT_RETURN_ACCEPTED ;

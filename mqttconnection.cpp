@@ -151,15 +151,15 @@ int MqttConnection::get_mosquitto_mid()
 
 bool MqttConnection::set_will_topic(char *topic, uint8_t qos, bool retain)
 {
-  if (!topic){
+  size_t len = 0;
+  if (!topic || (len=strlen(topic)) == 0){
     m_willtopic[0] = '\0' ;
     m_willtopicsize = 0 ;
     m_willmessage[0] = '\0';
     m_willmessagesize = 0;
   }else{
-    size_t len = strlen(topic) ;
     if (len > MQTT_TOPIC_MAX_BYTES) return false ;
-  
+    
     memcpy(m_willtopic, topic, len) ;
     m_willtopicsize = len ;
   }
