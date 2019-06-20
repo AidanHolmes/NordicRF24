@@ -86,6 +86,7 @@ protected:
 
 
   // Connection state handling for clients
+  void connection_watchdog(MqttConnection *p);
   void manage_client_connection(MqttConnection *p);
   void complete_client_connection(MqttConnection *p) ;
 

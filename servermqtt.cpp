@@ -590,6 +590,7 @@ void ServerMqttSnRF24::received_connect(uint8_t *sender_address, uint8_t *data, 
   if (will){
     // Start with will topic request
     con->set_activity(MqttConnection::Activity::willtopic);
+    con->set_cache(MQTT_WILLTOPICREQ, NULL, 0) ;
     writemqtt(sender_address, MQTT_WILLTOPICREQ, NULL, 0) ;
   }else{
     // No need for WILL setup, just CONNACK
@@ -637,7 +638,7 @@ void ServerMqttSnRF24::received_willtopic(uint8_t *sender_address, uint8_t *data
   if (con->get_state() != MqttConnection::State::connecting ||
       con->get_activity() != MqttConnection::Activity::willtopic){
     // WILLTOPIC is only used during connection setup. This is out of sequence
-    DPRINT("Out of sequence WILLTOPIC received\n") ;
+    EPRINT("Out of sequence WILLTOPIC received\n") ;
     return ;
   }
 
@@ -645,25 +646,28 @@ void ServerMqttSnRF24::received_willtopic(uint8_t *sender_address, uint8_t *data
     // Client indicated a will but didn't send one
     // Complete connection and leave will unset
     con->set_will_topic(NULL,0,false);
+    EPRINT("WILLTOPIC: received zero len topic\n") ; 
     buff[0] = MQTT_RETURN_ACCEPTED ;
     complete_client_connection(con) ;
     writemqtt(sender_address, MQTT_CONNACK, buff, 1) ;
-  }
-  memcpy(utf8, data+1, len-1) ;
-  utf8[len-1] = '\0' ;
+  }else{
+    memcpy(utf8, data+1, len-1) ;
+    utf8[len-1] = '\0' ;
     
-  uint8_t qos = 0;
-  bool retain = (data[0] & FLAG_RETAIN) ;
-  if (data[0] & FLAG_QOS1) qos = 1;
-  else if (data[0] & FLAG_QOS2) qos =2 ;
-  
-  DPRINT("WILLTOPIC: QOS = %u, Topic = %s, Retain = %s\n", qos, utf8, retain?"Yes":"No") ;
+    uint8_t qos = 0;
+    bool retain = (data[0] & FLAG_RETAIN) ;
+    if (data[0] & FLAG_QOS1) qos = 1;
+    else if (data[0] & FLAG_QOS2) qos =2 ;
+    
+    DPRINT("WILLTOPIC: QOS = %u, Topic = %s, Retain = %s\n", qos, utf8, retain?"Yes":"No") ;
 
-  if (!con->set_will_topic(utf8, qos, retain)){
-    EPRINT("WILLTOPIC: Failed to set will topic for connection!\n") ;
+    if (!con->set_will_topic(utf8, qos, retain)){
+      EPRINT("WILLTOPIC: Failed to set will topic for connection!\n") ;
+    }
+    con->set_activity(MqttConnection::Activity::willmessage);
+    con->set_cache(MQTT_WILLMSGREQ, NULL, 0) ;
+    writemqtt(sender_address, MQTT_WILLMSGREQ, NULL, 0) ;
   }
-  con->set_activity(MqttConnection::Activity::willmessage);
-  writemqtt(sender_address, MQTT_WILLMSGREQ, NULL, 0) ;
 
 }
 
@@ -684,7 +688,7 @@ void ServerMqttSnRF24::received_willmsg(uint8_t *sender_address, uint8_t *data, 
   if (con->get_state() != MqttConnection::State::connecting ||
       con->get_activity() != MqttConnection::Activity::willmessage){
     // WILLMSG is only used during connection setup. This is out of sequence
-    DPRINT("Out of sequence WILLMSG received\n") ;
+    EPRINT("Out of sequence WILLMSG received\n") ;
     return ;
   }
 
@@ -708,8 +712,7 @@ void ServerMqttSnRF24::received_willmsg(uint8_t *sender_address, uint8_t *data, 
   // Client sent final will message
   complete_client_connection(con) ;
   buff[0] = MQTT_RETURN_ACCEPTED ;
-  writemqtt(sender_address, MQTT_CONNACK, buff, 1) ;
-  
+  writemqtt(sender_address, MQTT_CONNACK, buff, 1) ;  
 }
 
 void ServerMqttSnRF24::received_disconnect(uint8_t *sender_address, uint8_t *data, uint8_t len)
@@ -850,12 +853,26 @@ void ServerMqttSnRF24::manage_client_connection(MqttConnection *p)
       if (!r) DPRINT("Ping to client failed\n") ;
     }
   }
+}
 
+void ServerMqttSnRF24::connection_watchdog(MqttConnection *p)
+{
+  if (p->get_state() == MqttConnection::State::disconnected ||
+      p->get_state() == MqttConnection::State::asleep) return ;
+  
   switch(p->get_activity()){
   case MqttConnection::Activity::registeringall:
   case MqttConnection::Activity::registering:
-    // Server registering a topic to a client
+    // Server sending comms to client
     if (!manage_pending_message(*p)){
+      p->set_activity(MqttConnection::Activity::none);
+    }
+    break;
+  case MqttConnection::Activity::willtopic:
+  case MqttConnection::Activity::willmessage:
+    // Server connection will fail if timout of will messages
+    if (!manage_pending_message(*p)){
+      p->set_state(MqttConnection::State::disconnected);
       p->set_activity(MqttConnection::Activity::none);
     }
     break;
@@ -873,7 +890,9 @@ bool ServerMqttSnRF24::manage_connections()
   for(p = m_connection_head; p != NULL; p=p->next){
     switch(p->get_state()){
     case MqttConnection::State::connected:
+    case MqttConnection::State::connecting:
       manage_client_connection(p) ;
+      connection_watchdog(p) ;
       break;
     case MqttConnection::State::disconnected:
       break;
