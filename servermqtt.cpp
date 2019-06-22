@@ -126,13 +126,19 @@ void ServerMqttSnRF24::received_publish(uint8_t *sender_address, uint8_t *data, 
   buff[2] = data[3] ; // replicate message id
   buff[3] = data[4] ; // replicate message id
 
+  MqttConnection *con = search_connection_address(sender_address);
+  if (!con){
+    EPRINT("No registered connection for client\n") ;
+    return;
+  }
+  
   DPRINT("PUBLISH: {Flags = %X, QoS = %u, Topic ID = %u, Mess ID = %u\n",
 	 data[0], qos, topicid, messageid) ;
 
   if (!m_mosquitto_initialised){
     EPRINT("Gateway is not connected to the Mosquitto server to process Publish\n") ;
     buff[4] = MQTT_RETURN_CONGESTION;
-    writemqtt(sender_address, MQTT_PUBACK, buff, 5) ;
+    writemqtt(con, MQTT_PUBACK, buff, 5) ;
     return ;
   }
   int mosqos = 0 ;
@@ -155,7 +161,7 @@ void ServerMqttSnRF24::received_publish(uint8_t *sender_address, uint8_t *data, 
     if (topic_type == FLAG_NORMAL_TOPIC_ID){
       EPRINT("Client sent normal topic ID %u for -1 QoS message\n", topicid) ;
       buff[4] = MQTT_RETURN_INVALID_TOPIC ;
-      writemqtt(sender_address, MQTT_PUBACK, buff, 5) ;
+      writemqtt(con, MQTT_PUBACK, buff, 5) ;
       return ;
     }
     // Just publish and forget for QoS -1
@@ -175,7 +181,7 @@ void ServerMqttSnRF24::received_publish(uint8_t *sender_address, uint8_t *data, 
       if (!t){
 	DPRINT("Cannot find topic %u in the pre-defined list\n", topicid) ;
 	buff[4] = MQTT_RETURN_INVALID_TOPIC ;
-	writemqtt(sender_address, MQTT_PUBACK, buff, 5) ;
+	writemqtt(con, MQTT_PUBACK, buff, 5) ;
 	return ;
       }
       ret = mosquitto_publish(m_pmosquitto,
@@ -190,11 +196,6 @@ void ServerMqttSnRF24::received_publish(uint8_t *sender_address, uint8_t *data, 
     return ;
   }
 
-  MqttConnection *con = search_connection_address(sender_address);
-  if (!con){
-    EPRINT("No registered connection for client\n") ;
-    return;
-  }
   // Store the publish entities for transmission to the server
   // The server can only handle one publish transaction at a time from a client
   con->set_pub_entities(topicid,
@@ -208,7 +209,7 @@ void ServerMqttSnRF24::received_publish(uint8_t *sender_address, uint8_t *data, 
   if (!server_publish(con)){
     EPRINT("Could not complete the PUBLISH message with the MQTT server\n") ;
     buff[4] = MQTT_RETURN_CONGESTION;
-    writemqtt(sender_address, MQTT_PUBACK, buff, 5) ;
+    writemqtt(con, MQTT_PUBACK, buff, 5) ;
     return ;      
   }
   con->set_activity(MqttConnection::Activity::publishing);
@@ -225,7 +226,6 @@ bool ServerMqttSnRF24::server_publish(MqttConnection *con)
 
   uint16_t topicid = con->get_pub_topicid() ;
   uint16_t messageid = con->get_pub_messageid() ;
-  const uint8_t *sender_address = con->get_address() ;
   buff[0] = topicid >> 8 ; // replicate topic id 
   buff[1] = (topicid & 0x00FF) ; // replicate topic id 
   buff[2] = messageid >> 8 ; // replicate message id
@@ -256,7 +256,7 @@ bool ServerMqttSnRF24::server_publish(MqttConnection *con)
     if (!topic){
       EPRINT("Predefined topic id %u unrecognised\n", topicid);
       buff[4] = MQTT_RETURN_INVALID_TOPIC ;
-      writemqtt(sender_address, MQTT_PUBACK, buff, 5) ;
+      writemqtt(con, MQTT_PUBACK, buff, 5) ;
       con->set_activity(MqttConnection::Activity::none);
       return false;
     }
@@ -271,7 +271,7 @@ bool ServerMqttSnRF24::server_publish(MqttConnection *con)
       EPRINT("Mosquitto publish failed with code %d\n", ret);
       con->set_activity(MqttConnection::Activity::none);
       buff[4] = MQTT_RETURN_CONGESTION ;
-      writemqtt(sender_address, MQTT_PUBACK, buff, 5) ;
+      writemqtt(con, MQTT_PUBACK, buff, 5) ;
       return false ;
     }
     con->set_mosquitto_mid(mid) ;
@@ -281,7 +281,7 @@ bool ServerMqttSnRF24::server_publish(MqttConnection *con)
     if (!topic){
       EPRINT("Client topic id %d unknown to gateway\n", topicid) ;
       buff[4] = MQTT_RETURN_INVALID_TOPIC ;
-      writemqtt(sender_address, MQTT_PUBACK, buff, 5) ;
+      writemqtt(con, MQTT_PUBACK, buff, 5) ;
       con->set_activity(MqttConnection::Activity::none);
       return false;
     }
@@ -295,7 +295,7 @@ bool ServerMqttSnRF24::server_publish(MqttConnection *con)
     if (ret != MOSQ_ERR_SUCCESS){
       EPRINT("Mosquitto publish failed with code %d\n", ret);
       buff[4] = MQTT_RETURN_CONGESTION ;
-      writemqtt(sender_address, MQTT_PUBACK, buff, 5) ;
+      writemqtt(con, MQTT_PUBACK, buff, 5) ;
       con->set_activity(MqttConnection::Activity::none);
       return false ;
     }
@@ -324,7 +324,7 @@ void ServerMqttSnRF24::received_pubrel(uint8_t *sender_address, uint8_t *data, u
   con->update_activity() ;
   con->set_activity(MqttConnection::Activity::none) ; // reset activity
   
-  writemqtt(sender_address, MQTT_PUBCOMP, data, 2) ;
+  writemqtt(con, MQTT_PUBCOMP, data, 2) ;
 }
 
 void ServerMqttSnRF24::received_subscribe(uint8_t *sender_address, uint8_t *data, uint8_t len)
@@ -372,7 +372,7 @@ void ServerMqttSnRF24::received_register(uint8_t *sender_address, uint8_t *data,
   response[2] = data[2] ; // Echo back the messageid received
   response[3] = data[3] ; // Echo back the messageid received
   response[4] = MQTT_RETURN_ACCEPTED ;
-  writemqtt(sender_address, MQTT_REGACK, response, 5) ;
+  writemqtt(con, MQTT_REGACK, response, 5) ;
   pthread_mutex_unlock(&m_rwlock) ;
 }
 
@@ -432,7 +432,7 @@ void ServerMqttSnRF24::received_pingreq(uint8_t *sender_address, uint8_t *data, 
   }
   #endif
  
-  writemqtt(sender_address, MQTT_PINGRESP, NULL, 0) ;
+  addrwritemqtt(sender_address, MQTT_PINGRESP, NULL, 0) ;
  
 }
 
@@ -446,7 +446,7 @@ void ServerMqttSnRF24::received_searchgw(uint8_t *sender_address, uint8_t *data,
   // a broadcast message back.
   if (m_broker_connected){
     buff[0] = m_gwid ;
-    writemqtt(m_broadcast, MQTT_GWINFO, buff, 1) ;
+    addrwritemqtt(sender_address, MQTT_GWINFO, buff, 1) ;
   }
 
 }
@@ -549,7 +549,7 @@ void ServerMqttSnRF24::received_connect(uint8_t *sender_address, uint8_t *data, 
   memcpy(szClientID, data+4, len - 4) ; // copy identifier
   szClientID[len-4] = '\0' ; // Create null terminated string
 
-  DPRINT("CONNECT: {flags = %02X, protocol = %02X, duration = %u, client ID = %s\n", data[0], data[1], (data[2] << 8) | data[3], szClientID) ;
+  DPRINT("CONNECT: {flags = %02X, protocol = %02X, duration = %u, client ID = %s}\n", data[0], data[1], (data[2] << 8) | data[3], szClientID) ;
 
   if (data[1] != MQTT_PROTOCOL){
     EPRINT("Invalid protocol ID in CONNECT from client %s\n", szClientID);
@@ -560,7 +560,11 @@ void ServerMqttSnRF24::received_connect(uint8_t *sender_address, uint8_t *data, 
 
   MqttConnection *con = search_cached_connection(szClientID) ;
   if (!con){
-    DPRINT("Cannot find an existing connection, creating a new connection for %s\n", szClientID) ;
+#if DEBUG
+    char addrdbg[(MAX_RF24_ADDRESS_LEN*2)+1];
+    addr_to_straddr(sender_address, addrdbg, m_address_len) ;    
+    DPRINT("Cannot find an existing connection, creating a new connection for %s at address %s\n", szClientID, addrdbg) ;
+#endif
     con = new_connection() ;
   }
   if (!con){
@@ -577,9 +581,11 @@ void ServerMqttSnRF24::received_connect(uint8_t *sender_address, uint8_t *data, 
   con->duration = (data[2] << 8) | data[3] ; // MSB assumed
   con->set_address(sender_address, m_address_len) ;
 
-  // If clean flag is set then remove all topics
+  // If clean flag is set then remove all topics and will data
   if (((FLAG_CLEANSESSION & data[0]) > 0)){
     con->topics.free_topics() ;
+    con->set_will_topic(NULL, 0, false);
+    con->set_will_message(NULL, 0) ;
   }
     
   // If WILL if flagged then set the flags for the message and topic
@@ -588,16 +594,16 @@ void ServerMqttSnRF24::received_connect(uint8_t *sender_address, uint8_t *data, 
   pthread_mutex_unlock(&m_rwlock) ;
 
   if (will){
+    DPRINT("Requesting WILLTOPICREQ from client %s\n", szClientID);
     // Start with will topic request
     con->set_activity(MqttConnection::Activity::willtopic);
-    con->set_cache(MQTT_WILLTOPICREQ, NULL, 0) ;
-    writemqtt(sender_address, MQTT_WILLTOPICREQ, NULL, 0) ;
+    writemqtt(con, MQTT_WILLTOPICREQ, NULL, 0) ;
   }else{
     // No need for WILL setup, just CONNACK
     uint8_t buff[1] ;
     buff[0] = MQTT_RETURN_ACCEPTED ;
     complete_client_connection(con) ;
-    writemqtt(sender_address, MQTT_CONNACK, buff, 1) ;
+    writemqtt(con, MQTT_CONNACK, buff, 1) ;
   }
 
 }
@@ -630,7 +636,7 @@ void ServerMqttSnRF24::received_willtopic(uint8_t *sender_address, uint8_t *data
   if (!con){
     EPRINT("WillTopic could not find the client connection\n") ;
     buff[0] = MQTT_RETURN_CONGESTION ; // There is no "who are you?" response so this will do
-    writemqtt(sender_address, MQTT_CONNACK, buff, 1) ;
+    writemqtt(con, MQTT_CONNACK, buff, 1) ;
     return ;
   }
   
@@ -649,7 +655,7 @@ void ServerMqttSnRF24::received_willtopic(uint8_t *sender_address, uint8_t *data
     EPRINT("WILLTOPIC: received zero len topic\n") ; 
     buff[0] = MQTT_RETURN_ACCEPTED ;
     complete_client_connection(con) ;
-    writemqtt(sender_address, MQTT_CONNACK, buff, 1) ;
+    writemqtt(con, MQTT_CONNACK, buff, 1) ;
   }else{
     memcpy(utf8, data+1, len-1) ;
     utf8[len-1] = '\0' ;
@@ -665,8 +671,7 @@ void ServerMqttSnRF24::received_willtopic(uint8_t *sender_address, uint8_t *data
       EPRINT("WILLTOPIC: Failed to set will topic for connection!\n") ;
     }
     con->set_activity(MqttConnection::Activity::willmessage);
-    con->set_cache(MQTT_WILLMSGREQ, NULL, 0) ;
-    writemqtt(sender_address, MQTT_WILLMSGREQ, NULL, 0) ;
+    writemqtt(con, MQTT_WILLMSGREQ, NULL, 0) ;
   }
 
 }
@@ -680,7 +685,7 @@ void ServerMqttSnRF24::received_willmsg(uint8_t *sender_address, uint8_t *data, 
   if (!con){
     EPRINT("WillMsg could not find the client connection\n") ;
     buff[0] = MQTT_RETURN_CONGESTION ; // There is no "who are you?" response so this will do
-    writemqtt(sender_address, MQTT_CONNACK, buff, 1) ;
+    writemqtt(con, MQTT_CONNACK, buff, 1) ;
     return ;
   }
 
@@ -712,7 +717,7 @@ void ServerMqttSnRF24::received_willmsg(uint8_t *sender_address, uint8_t *data, 
   // Client sent final will message
   complete_client_connection(con) ;
   buff[0] = MQTT_RETURN_ACCEPTED ;
-  writemqtt(sender_address, MQTT_CONNACK, buff, 1) ;  
+  writemqtt(con, MQTT_CONNACK, buff, 1) ;  
 }
 
 void ServerMqttSnRF24::received_disconnect(uint8_t *sender_address, uint8_t *data, uint8_t len)
@@ -735,7 +740,7 @@ void ServerMqttSnRF24::received_disconnect(uint8_t *sender_address, uint8_t *dat
   con->set_state(MqttConnection::State::disconnected) ;
   con->update_activity() ;
 
-  writemqtt(sender_address, MQTT_DISCONNECT, NULL, 0) ;
+  writemqtt(con, MQTT_DISCONNECT, NULL, 0) ;
   
 }
 
@@ -788,10 +793,10 @@ void ServerMqttSnRF24::gateway_publish_callback(struct mosquitto *m,
   switch(con->get_pub_qos()){
   case 1:
     buff[4] = MQTT_RETURN_ACCEPTED ;
-    gateway->writemqtt(con->get_address(), MQTT_PUBACK, buff, 5) ;
+    gateway->writemqtt(con, MQTT_PUBACK, buff, 5) ;
     break ;
   case 2:
-    gateway->writemqtt(con->get_address(), MQTT_PUBREC, buff+2, 2) ;
+    gateway->writemqtt(con, MQTT_PUBREC, buff+2, 2) ;
     break ;
   default:
     EPRINT("Invalid QoS %d\n", con->get_pub_qos()) ;
@@ -842,7 +847,7 @@ void ServerMqttSnRF24::manage_client_connection(MqttConnection *p)
     p->set_state(MqttConnection::State::disconnected) ;
     // Attempt to send a disconnect
     DPRINT("Disconnecting lost client: %s\n", p->get_client_id()) ;
-    writemqtt(p->get_address(), MQTT_DISCONNECT, NULL, 0) ;
+    writemqtt(p, MQTT_DISCONNECT, NULL, 0) ;
     send_will(p) ;
     return ;
   }else{
@@ -923,7 +928,7 @@ bool ServerMqttSnRF24::advertise(uint16_t duration)
   buff[1] = duration >> 8 ; // Is this MSB first or LSB first?
   buff[2] = duration & 0x00FF;
   for(uint16_t retry = 0;retry < m_max_retries+1;retry++){
-    if (writemqtt(m_broadcast, MQTT_ADVERTISE, buff, 3))
+    if (addrwritemqtt(m_broadcast, MQTT_ADVERTISE, buff, 3))
       return true ;
   }
   return false ;
@@ -943,9 +948,8 @@ bool ServerMqttSnRF24::register_topic(MqttConnection *con, MqttTopic *t)
   char *sz = t->get_topic() ;
   size_t len = strlen(sz) ;
   memcpy(buff+4, sz, len) ; 
-  if (writemqtt(con->get_address(), MQTT_REGISTER, buff, 4+len)){
+  if (writemqtt(con, MQTT_REGISTER, buff, 4+len)){
     // Cache the message
-    con->set_cache(MQTT_REGISTER, buff, 4+len) ;
     con->set_activity(MqttConnection::Activity::registering) ;
     return true ;
   }
@@ -986,7 +990,7 @@ bool ServerMqttSnRF24::ping(const char *szclientid)
   // if it worked
   con->reset_ping() ;
 
-  if (writemqtt(con->get_address(), MQTT_PINGREQ, NULL, 0))
+  if (writemqtt(con, MQTT_PINGREQ, NULL, 0))
     return true ;
 
   return false ; // failed to send the ping

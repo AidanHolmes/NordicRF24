@@ -141,6 +141,8 @@ void ClientMqttSnRF24::received_pubrec(uint8_t *sender_address, uint8_t *data, u
   if (m_client_connection.get_activity() != MqttConnection::Activity::publishing)
     return ; // client is not expecting a pubrec
 
+  if (!m_client_connection.is_connected()) return ;
+
   // Check that this is coming from the expected gateway
   if (!m_client_connection.address_match(sender_address)) return ; 
 
@@ -154,7 +156,7 @@ void ClientMqttSnRF24::received_pubrec(uint8_t *sender_address, uint8_t *data, u
     
   uint16_t messageid = (data[0] << 8) | data[1] ; // Assuming MSB is first
   DPRINT("PUBREC {messageid = %u}\n", messageid) ;
-  writemqtt(sender_address, MQTT_PUBREL, data, 2) ;
+  writemqtt(&m_client_connection, MQTT_PUBREL, data, 2) ;
 }
 
 void ClientMqttSnRF24::received_pubcomp(uint8_t *sender_address, uint8_t *data, uint8_t len)
@@ -270,7 +272,7 @@ void ClientMqttSnRF24::received_pingreq(uint8_t *sender_address, uint8_t *data, 
   }
   #endif
  
-  writemqtt(sender_address, MQTT_PINGRESP, NULL, 0) ;
+  addrwritemqtt(sender_address, MQTT_PINGRESP, NULL, 0) ;
  
 }
 
@@ -279,33 +281,24 @@ void ClientMqttSnRF24::received_advertised(uint8_t *sender_address, uint8_t *dat
   uint16_t duration = (data[1] << 8) | data[2] ; // Assuming MSB is first
   DPRINT("ADVERTISED: {gw = %u, duration = %u}\n", data[0], duration) ;
 
-  bool bfound = false;
-  // TO DO: ADD ADDRESS!
-  // Since RF24 doesn't actually let the receiver know who sent the
-  // packet the gateway info cannot be complete. All that can be done is
-  // to check if the gateway is already known and reactivate
-  // Assumes address hasn't changed if it is active again.
   pthread_mutex_lock(&m_rwlock) ;
 
-  for (uint8_t i=0;i<MAX_GATEWAYS;i++){
-    if (m_gwinfo[i].allocated &&
-	m_gwinfo[i].gw_id == data[2] &&
-	!m_gwinfo[i].active){
-      m_gwinfo[i].active = true ;
-      m_gwinfo[i].advertised(duration) ;
-      bfound = true ;
-      break ;
+  // Call update gateway. This returns false if gateway is not known
+  if (!update_gateway(sender_address, data[0], duration)){
+
+    // New gateway
+    bool ret = add_gateway(sender_address, data[0], duration);
+    if (!ret){
+      DPRINT("Cannot add gateway %u\n", data[0]) ;
     }
   }
-  if (bfound){
-    if (m_client_connection.is_connected() &&
-	m_client_connection.get_gwid() == data[0]){
-      m_client_connection.update_activity() ;
-    }
-  }else{
-    
+
+  // If client is connected to this gateway then update client connection activity
+  if (m_client_connection.is_connected() &&
+      m_client_connection.get_gwid() == data[0]){
+    m_client_connection.update_activity() ;
   }
-	
+
   pthread_mutex_unlock(&m_rwlock) ;
   
 }
@@ -321,7 +314,9 @@ bool ClientMqttSnRF24::add_gateway(uint8_t *gateway_address, uint8_t gwid, uint1
 
       memcpy(m_gwinfo[i].address, gateway_address, m_address_len) ;
 
-      m_gwinfo[i].advertised(64800) ; // no idea if it's going to advertise
+      if (ad_duration > 0){
+	m_gwinfo[i].advertised(ad_duration) ; // no idea if it's going to advertise
+      }
       m_gwinfo[i].update_activity() ; // update last gw activity
       return true ;
     }
@@ -334,13 +329,13 @@ bool ClientMqttSnRF24::update_gateway(uint8_t *gateway_address, uint8_t gwid, ui
   for (uint8_t i=0; i < MAX_GATEWAYS; i++){
     if (m_gwinfo[i].allocated && m_gwinfo[i].gw_id == gwid){
       m_gwinfo[i].address_length = m_address_len ;
-      m_gwinfo[i].allocated = true ;
       m_gwinfo[i].active = true ;
-      m_gwinfo[i].gw_id = gwid;
 
       memcpy(m_gwinfo[i].address, gateway_address, m_address_len) ;
 
-      m_gwinfo[i].advertised(64800) ; // no idea if it's going to advertise
+      if (ad_duration > 0){
+	m_gwinfo[i].advertised(ad_duration) ; // no idea if it's going to advertise
+      }
       m_gwinfo[i].update_activity() ; // update last gw activity
       return true ;
     }
@@ -359,16 +354,16 @@ void ClientMqttSnRF24::received_gwinfo(uint8_t *sender_address, uint8_t *data, u
   pthread_mutex_lock(&m_rwlock) ;
 
   if (len == m_address_len+1) // Was the address populated in GWINFO?
-    gw_updated = update_gateway(data+1, data[0], 64800);
+    gw_updated = update_gateway(data+1, data[0], 0);
   else
-    gw_updated = update_gateway(sender_address, data[0], 64800);
+    gw_updated = update_gateway(sender_address, data[0], 0);
   
   if (!gw_updated){
     // Insert new gateway. Overwrite old or expired gateways
     if (len == m_address_len+1){ // Was the address populated in GWINFO?
-      add_gateway(data+1, data[0], 64800);
+      add_gateway(data+1, data[0], 0);
     }else{ // No address, but the sender address can be used
-      add_gateway(sender_address, data[0], 64800);
+      add_gateway(sender_address, data[0], 0);
     }
   }
   pthread_mutex_unlock(&m_rwlock) ;
@@ -432,12 +427,16 @@ void ClientMqttSnRF24::received_connack(uint8_t *sender_address, uint8_t *data, 
 
 void ClientMqttSnRF24::received_willtopicreq(uint8_t *sender_address, uint8_t *data, uint8_t len)
 {
+
+  // Check that this is coming from the expected gateway
+  if (!m_client_connection.address_match(sender_address)) return ; 
+
   // Only clients need to respond to this
   DPRINT("WILLTOPICREQ\n") ;
   if (m_client_connection.get_state() != MqttConnection::State::connecting) return ; // Unexpected
   if (m_willtopicsize == 0){
     // No topic set
-    writemqtt(sender_address, MQTT_WILLTOPIC, NULL, 0) ;
+    writemqtt(&m_client_connection, MQTT_WILLTOPIC, NULL, 0) ;
   }else{
     uint8_t send[1+MQTT_TOPIC_MAX_BYTES];
     send[0] = 0 ;
@@ -454,7 +453,7 @@ void ClientMqttSnRF24::received_willtopicreq(uint8_t *sender_address, uint8_t *d
     }
     // Any overflow of size should have been checked so shouldn't need to check again here.
     memcpy(send+1, m_willtopic, m_willtopicsize) ;
-    writemqtt(sender_address, MQTT_WILLTOPIC, send, m_willtopicsize+1) ;
+    writemqtt(&m_client_connection, MQTT_WILLTOPIC, send, m_willtopicsize+1) ;
   }
   m_client_connection.set_activity(MqttConnection::Activity::willtopic) ;
   m_client_connection.update_activity() ;
@@ -463,19 +462,22 @@ void ClientMqttSnRF24::received_willtopicreq(uint8_t *sender_address, uint8_t *d
 
 void ClientMqttSnRF24::received_willmsgreq(uint8_t *sender_address, uint8_t *data, uint8_t len)
 {
+  // Check that this is coming from the expected gateway
+  if (!m_client_connection.address_match(sender_address)) return ; 
+
   // Only clients need to respond to this
   DPRINT("WILLMSGREQ\n") ;
   if (m_client_connection.get_state() != MqttConnection::State::connecting) return ; // Unexpected
 
   if (m_willmessagesize == 0){
     // No topic set
-    writemqtt(sender_address, MQTT_WILLMSG, NULL, 0) ;
+    writemqtt(&m_client_connection, MQTT_WILLMSG, NULL, 0) ;
   }else{
     uint8_t send[MQTT_MESSAGE_MAX_BYTES];
 
     // Any overflow of size should have been checked so shouldn't need to check again here.
     memcpy(send, m_willmessage, m_willmessagesize) ; 
-    writemqtt(sender_address, MQTT_WILLMSG, send, m_willmessagesize) ;
+    writemqtt(&m_client_connection, MQTT_WILLMSG, send, m_willmessagesize) ;
   }
   m_client_connection.set_activity(MqttConnection::Activity::willmessage) ;
   m_client_connection.update_activity() ;
@@ -518,7 +520,7 @@ void ClientMqttSnRF24::initialise(uint8_t address_len, uint8_t *broadcast, uint8
   MqttSnRF24::initialise(address_len, broadcast, address) ;
 }
 
-void ClientMqttSnRF24::manage_gw_connection()
+bool ClientMqttSnRF24::manage_gw_connection()
 {
   // Has connection been lost or does the connection need a keep-alive
   // ping to maintain connection?
@@ -527,12 +529,14 @@ void ClientMqttSnRF24::manage_gw_connection()
     DPRINT("Client lost connection to gateway %u\n", m_client_connection.get_gwid()) ;
     // Close connection. Take down connection
     m_client_connection.set_state(MqttConnection::State::disconnected) ;
+    m_client_connection.set_activity(MqttConnection::Activity::none) ;
     m_client_connection.topics.free_topics() ; // clear all topics
     // Disable the gateway in the client register
     MqttGwInfo *gw = get_gateway(m_client_connection.get_gwid()) ;
     if (gw){
       gw->active = false ;
     }
+    return false;
     
   }else{
     // Another ping due?      
@@ -542,24 +546,24 @@ void ClientMqttSnRF24::manage_gw_connection()
       if (!r) DPRINT("Ping to gw failed\n") ;
     }
   }
-  switch(m_client_connection.get_activity()){
-  case MqttConnection::Activity::subscribing:
-  case MqttConnection::Activity::publishing:
-  case MqttConnection::Activity::registering:
-    if (!manage_pending_message(m_client_connection)){
-      m_client_connection.set_activity(MqttConnection::Activity::none) ;
-    }
-    break;
-  default:
-    break;
-  }
+  return true ;
 }
 
 bool ClientMqttSnRF24::manage_connections()
 {
   switch (m_client_connection.get_state()){
   case MqttConnection::State::connected:
-    manage_gw_connection() ;
+    // Manage connection to gateway. Ensure gateway is still there and connection should be open
+    // Function returns false if gateway lost - no need to manage connection
+    if (manage_gw_connection()){
+      if (!m_client_connection.get_activity() == MqttConnection::Activity::none){
+	// If connected client is doing anything then manage the connection
+	if (!manage_pending_message(m_client_connection)){
+	  m_client_connection.set_activity(MqttConnection::Activity::none) ;
+	}
+      }
+    }
+
     break;
   case MqttConnection::State::connecting:
     if (!manage_pending_message(m_client_connection)){
@@ -572,13 +576,21 @@ bool ClientMqttSnRF24::manage_connections()
     }
     break ;
   case MqttConnection::State::disconnected:
+    // Retry searches if no response.
+    if (m_client_connection.get_activity() == MqttConnection::Activity::searching){
+      if (!manage_pending_message(m_client_connection)){
+	// No search response, stop searching
+	m_client_connection.set_activity(MqttConnection::Activity::none);
+      }
+    }
+      
     break ;
   case MqttConnection::State::asleep:
     break ;
   default:
     break ; // unhandled connection state
   }
-    
+  
   pthread_mutex_lock(&m_rwlock) ;
   // Refresh GW information
   for (unsigned int i=0; i < MAX_GATEWAYS;i++){
@@ -607,10 +619,14 @@ bool ClientMqttSnRF24::searchgw(uint8_t radius)
 {
   uint8_t buff[1] ;
   buff[0] = radius ;
-  for(uint16_t retry = 0;retry < m_max_retries+1;retry++){
-    if (writemqtt(m_broadcast, MQTT_SEARCHGW, buff, 1))
-      return true ;
+
+  if (addrwritemqtt(m_broadcast, MQTT_SEARCHGW, buff, 1)){
+    // Cache the message
+    m_client_connection.set_cache(MQTT_SEARCHGW, buff, 1) ;
+    m_client_connection.set_activity(MqttConnection::Activity::searching) ;
+    return true ;
   }
+
   return false ;
 }
 
@@ -646,9 +662,8 @@ uint16_t ClientMqttSnRF24::register_topic(const wchar_t *topic)
     buff[3] = mid & 0x00FF;
     memcpy(buff+4, sztopic, len) ;
     
-    if (writemqtt(m_client_connection.get_address(), MQTT_REGISTER, buff, 4+len)){
+    if (writemqtt(&m_client_connection, MQTT_REGISTER, buff, 4+len)){
       // Cache the message
-      m_client_connection.set_cache(MQTT_REGISTER, buff, 4+len) ;
       m_client_connection.set_activity(MqttConnection::Activity::registering) ;
       return true ;
     }
@@ -669,7 +684,7 @@ bool ClientMqttSnRF24::ping(uint8_t gwid)
   if (m_client_connection.get_gwid() == gwid)
     m_client_connection.reset_ping() ;
   
-  if (writemqtt(gw->address, MQTT_PINGREQ, (uint8_t *)m_szclient_id, clientid_len))
+  if (addrwritemqtt(gw->address, MQTT_PINGREQ, (uint8_t *)m_szclient_id, clientid_len))
     return true ;
 
   return false ;
@@ -690,9 +705,8 @@ bool ClientMqttSnRF24::disconnect(uint16_t sleep_duration)
   }
   m_sleep_duration = sleep_duration ; // store the duration
 
-  if (writemqtt(m_client_connection.get_address(), MQTT_DISCONNECT, buff, len)){
+  if (writemqtt(&m_client_connection, MQTT_DISCONNECT, buff, len)){
     m_client_connection.set_state(MqttConnection::State::disconnecting) ;
-    m_client_connection.set_cache(MQTT_DISCONNECT, buff, len) ;
     return true ;
   }
   
@@ -734,7 +748,7 @@ bool ClientMqttSnRF24::publish_noqos(uint8_t gwid, uint16_t topicid, uint8_t top
 
   if(topictype == FLAG_SHORT_TOPIC_NAME ||
      topictype == FLAG_DEFINED_TOPIC_ID){
-    if (!writemqtt(gw->address, MQTT_PUBLISH, buff, len)){
+    if (!addrwritemqtt(gw->address, MQTT_PUBLISH, buff, len)){
       EPRINT("Failed to send QoS -1 message\n") ;
       return false ;
     }
@@ -771,11 +785,10 @@ bool ClientMqttSnRF24::publish(uint16_t topicid, uint8_t qos, bool retain, uint8
   }
   memcpy(buff+5,payload, payload_len);
   
-  if (writemqtt(m_client_connection.get_address(), MQTT_PUBLISH, buff, len)){
+  if (writemqtt(&m_client_connection, MQTT_PUBLISH, buff, len)){
     m_client_connection.set_activity(MqttConnection::Activity::publishing);
     // keep a copy for retries. Set the DUP flag for retries
     buff[0] |= FLAG_DUP;
-    m_client_connection.set_cache(MQTT_PUBLISH, buff, len) ;
     return true ;
   }
 
@@ -808,16 +821,21 @@ bool ClientMqttSnRF24::connect(uint8_t gwid, bool will, bool clean, uint16_t dur
   if (len > MAX_MQTT_CLIENTID) throw MqttOutOfRange("Client ID too long") ;
   memcpy(buff+4, m_szclient_id, len) ; // do not copy /0 terminator
 
-  if (writemqtt(m_client_connection.get_address(), MQTT_CONNECT, buff, 4+len)){
+#if DEBUG
+  char addrdbg[(MAX_RF24_ADDRESS_LEN*2)+1];
+  addr_to_straddr(gw->address, addrdbg, m_address_len) ;
+  DPRINT("Connecting to gateway %d at address %s\n", gwid, addrdbg) ;
+#endif
+  if (writemqtt(&m_client_connection, MQTT_CONNECT, buff, 4+len)){
     // Record the start of the connection
     m_client_connection.set_state(MqttConnection::State::connecting) ;
     if(will)
       m_client_connection.set_activity(MqttConnection::Activity::willtopic) ;
     else
       m_client_connection.set_activity(MqttConnection::Activity::none) ;
+    // Hold keep alive info on gateway list and in the connection parameters
     m_client_connection.duration = duration ; // keep alive timer for connection
     gw->keepalive(duration) ; // set the keep alive in GW register
-    m_client_connection.set_cache(MQTT_CONNECT, buff, 4+len) ; // keep a copy for retries
     return true ;
   }
 
@@ -842,10 +860,14 @@ bool ClientMqttSnRF24::is_gateway_valid(uint8_t gwid)
 void ClientMqttSnRF24::print_gw_table()
 {
   for (unsigned int i=0; i < MAX_GATEWAYS;i++){
-    printf("Allocated %s, Active: %s, GWID: %u\n",
-	   (m_gwinfo[i].allocated?"yes":"no"),
-	   (m_gwinfo[i].active?"yes":"no"),
-	   m_gwinfo[i].gw_id) ;
+    if (m_gwinfo[i].active){
+      printf("GWID: %u, Active: %s, Keep Alive: %u, Advertising: %s, Advertising Duration: %u\n", 
+	     m_gwinfo[i].gw_id,
+	     (m_gwinfo[i].active?"yes":"no"),
+	     m_gwinfo[i].get_keepalive(),
+	     m_gwinfo[i].advertising?"yes":"no",
+	     m_gwinfo[i].advertising_duration());
+    }
   }
 }
 
@@ -865,34 +887,37 @@ bool ClientMqttSnRF24::is_connected()
   return m_client_connection.is_connected() ;
 }
 
+void ClientMqttSnRF24::set_willtopic(const char *topic, uint8_t qos)
+{
+  if (topic == NULL){
+    m_willtopic[0] = '\0' ; // Clear the topic
+    m_willtopicsize = 0;
+  }else{
+    strncpy(m_willtopic, topic, (MQTT_TOPIC_SAFE_BYTES + (MAX_RF24_ADDRESS_LEN - m_address_len)));
+    m_willtopic[MQTT_TOPIC_MAX_BYTES] = '\0';
+    m_willtopicsize = strlen(m_willtopic)+1 ;
+  }
+  m_willtopicqos = qos ;
+}
+
 void ClientMqttSnRF24::set_willtopic(const wchar_t *topic, uint8_t qos)
 {
   if (topic == NULL){
     m_willtopic[0] = '\0' ; // Clear the topic
     m_willtopicsize = 0;
+    m_willtopicqos = qos ;
+  }else{
+    size_t len = wcslen(topic) ;
+    if (len > (unsigned)(MQTT_TOPIC_SAFE_BYTES + (MAX_RF24_ADDRESS_LEN - m_address_len))){
+      throw MqttOutOfRange("topic too long for payload") ;
+    }
+
+    // TO DO: use wchar_to_utf8
+    size_t ret = wchar_to_utf8(topic, m_willtopic, (MQTT_TOPIC_SAFE_BYTES + (MAX_RF24_ADDRESS_LEN - m_address_len)));
+    
+    m_willtopicsize = ret ;
+    m_willtopicqos = qos ;
   }
-  size_t len = wcslen(topic) ;
-  if (len > (unsigned)(MQTT_TOPIC_SAFE_BYTES + (MAX_RF24_ADDRESS_LEN - m_address_len))){
-    throw MqttOutOfRange("topic too long for payload") ;
-  }
-
-  // TO DO: use wchar_to_utf8
-  
-  char *curlocale = setlocale(LC_CTYPE, NULL);
-  
-  if (!setlocale(LC_CTYPE, "en_GB.UTF-8")){
-    throw MqttOutOfRange("cannot set UTF locale") ;
-  }
-  
-  size_t ret = wcstombs(m_willtopic, topic, (MQTT_TOPIC_SAFE_BYTES + (MAX_RF24_ADDRESS_LEN - m_address_len))) ;
-
-  setlocale(LC_CTYPE, curlocale) ; // reset locale
-
-  if (ret < 0) throw MqttOutOfRange("topic string conversion error") ;
-
-
-  m_willtopicsize = ret ;
-  m_willtopicqos = qos ;
 }
 
 void ClientMqttSnRF24::set_willmessage(const wchar_t *message)

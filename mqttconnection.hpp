@@ -27,7 +27,7 @@ public:
     connecting, disconnecting // transition states
   };
   enum Activity{
-    none, willtopic, willmessage, registering, registeringall, publishing, subscribing
+    none, willtopic, willmessage, registering, registeringall, publishing, subscribing, searching
   };
   
   MqttConnection() ;

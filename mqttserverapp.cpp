@@ -163,15 +163,15 @@ int main(int argc, char **argv)
   mqtt.set_2_byte_crc(true) ;
   mqtt.set_data_rate(opt_speed) ; 
 
-  mqtt.set_gateway_id(88) ;
+  mqtt.set_gateway_id(888) ;
 
   mqtt.initialise(ADDR_WIDTH, rf24broadcast, rf24address) ;
+  mqtt.set_advertise_interval(400);
 
-  print_state(&mqtt) ;  
+  //print_state(&mqtt) ;
   
   // Working loop
   for ( ; ; ){
-
     mqtt.manage_connections() ;
     nano_sleep(0, 5000000) ; // 5ms wait
   }

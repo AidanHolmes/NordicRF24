@@ -61,6 +61,7 @@ public:
   bool is_connected() ; // are we connected to any gateway?
   bool is_disconnected() ; // are we disconnected to any gateway?
   void set_willtopic(const wchar_t *topic, uint8_t qos) ;
+  void set_willtopic(const char *topic, uint8_t qos) ;
   void set_willmessage(const uint8_t *message, uint8_t len) ;
   void set_willmessage(const wchar_t *message) ;
   // TO DO: Protocol also allows update of will messages during connection to server
@@ -123,7 +124,7 @@ public:
 protected:
 
   // Connection state handling for clients
-  void manage_gw_connection() ;
+  bool manage_gw_connection() ;
 
   virtual void received_advertised(uint8_t *sender_address, uint8_t *data, uint8_t len) ;
   virtual void received_gwinfo(uint8_t *sender_address, uint8_t *data, uint8_t len) ;

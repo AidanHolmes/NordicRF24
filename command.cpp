@@ -14,9 +14,9 @@ void Command::reset()
   m_p = m_sz ;
   m_bmatchfailed = false ;
 }
-void Command::cmd()
+void Command::cmd(char params[][30], int count)
 {
-  if (m_fn) (*m_fn)() ;
+  if (m_fn) (*m_fn)(params, count) ;
 }
 
 bool Command::found(char c)

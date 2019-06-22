@@ -84,6 +84,7 @@ public:
     address_length=0;
     m_ad_time = 0 ;
     m_ad_duration = 0 ;
+    advertising = false ;
     m_lastactivity = 0 ;
     m_keepalive = 0 ;
   }
@@ -92,16 +93,20 @@ public:
   uint8_t gw_id ;
   bool active ;
   bool allocated ;
+  bool advertising ;
   void advertised(uint16_t t){
+    advertising = true ;
     m_ad_time = time(NULL) ;
     m_lastactivity = m_ad_time ; // update activity as well
     m_ad_duration = t + 60 ; // add 1 min grace
+  
   }
+  uint16_t get_keepalive(){return m_keepalive;}
   void keepalive(uint16_t t){
     m_keepalive = t ;
   }
   bool advertised_expired(){
-    return (time(NULL) > (m_ad_time + m_ad_duration)) ;
+    return (advertising && time(NULL) > (m_ad_time + m_ad_duration)) ;
   }
   void update_activity(){
     m_lastactivity = time(NULL);
@@ -109,6 +114,9 @@ public:
   bool is_active(){
     return (time(NULL) > m_lastactivity + m_keepalive);
   }
+
+  uint16_t advertising_duration(){return m_ad_duration;}
+  
 protected:
   time_t m_ad_time ;
   uint16_t m_ad_duration ;
@@ -122,6 +130,7 @@ public:
   ~MqttSnRF24() ;
 
   size_t wchar_to_utf8(const wchar_t *wstr, char *outstr, const size_t maxbytes) ;
+  size_t utf8_to_wchar(const char *str, wchar_t *outstr, const size_t maxbytes) ; 
   
   // Powers up and configures addresses. Goes into listen
   // mode
@@ -179,7 +188,12 @@ protected:
   // Creates header and body. Writes to address
   // Throws MqttIOErr or MqttOutOfRange exceptions
   // Returns false if connection failed max retries
-  bool writemqtt(const uint8_t *address, uint8_t messageid, const uint8_t *buff, uint8_t len);
+  bool addrwritemqtt(const uint8_t *address,
+		     uint8_t messageid,
+		     const uint8_t *buff,
+		     uint8_t len);
+
+  bool writemqtt(MqttConnection *con, uint8_t messageid, const uint8_t *buff, uint8_t len);
   void listen_mode() ;
   void send_mode() ;
 

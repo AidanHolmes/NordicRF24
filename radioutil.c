@@ -88,3 +88,13 @@ int straddr_to_addr(const char *str, uint8_t *rf24addr, const unsigned int len)
   }
   return 1 ;
 }
+
+void addr_to_straddr(uint8_t *rf24addr, char *szaddress, const uint8_t address_len)
+{
+  char *p = szaddress;
+  for (int i=address_len-1; i >= 0; i--){    
+    snprintf(p, 3, "%X",rf24addr[i]) ;
+    p += 2;
+  }
+  p = '\0';
+}

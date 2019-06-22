@@ -296,10 +296,10 @@ bool MqttSnRF24::manage_pending_message(MqttConnection &con)
       return false ;
     }else{
       // Retry
-      writemqtt(con.get_address(),
-		con.get_cache_id(),
-		con.get_cache(),
-		con.get_cache_len());
+      addrwritemqtt(con.get_address(),
+		    con.get_cache_id(),
+		    con.get_cache(),
+		    con.get_cache_len());
     }
   }
   return true ;
@@ -461,16 +461,29 @@ bool MqttSnRF24::dispatch_queue()
   return ret ;
 }
 
-bool MqttSnRF24::writemqtt(const uint8_t *address,
+bool MqttSnRF24::writemqtt(MqttConnection *con,
 			   uint8_t messageid,
 			   const uint8_t *buff, uint8_t len)
+{
+  const uint8_t *address = con->get_address() ;
+  if (addrwritemqtt(address,messageid,buff,len)){
+    con->set_cache(messageid, buff, len) ;
+    return true ;
+  }
+  return false;
+}
+
+bool MqttSnRF24::addrwritemqtt(const uint8_t *address,
+			       uint8_t messageid,
+			       const uint8_t *buff,
+			       uint8_t len)
 {
   bool ret = false ;
   uint8_t send_buff[MQTT_PAYLOAD_WIDTH] ;
   
   // includes the length field and message type
   uint8_t payload_len = len+MQTT_HDR_LEN; 
-  
+
   //DPRINT("Transmitting...\n") ;
 
   if ((payload_len+m_address_len) > MQTT_PAYLOAD_WIDTH){
@@ -540,6 +553,25 @@ size_t MqttSnRF24::wchar_to_utf8(const wchar_t *wstr, char *outstr, const size_t
   }
   
   return ret ;
+}
+size_t utf8_to_wchar(const char *str, wchar_t *outstr, const size_t maxbytes)
+{
+  char *curloc = setlocale(LC_CTYPE, NULL);
+  size_t ret = 0;
+
+  if (!setlocale(LC_CTYPE, "en_GB.UTF-8")){
+    throw MqttOutOfRange("cannot set UTF8 locale") ;
+
+    ret = mbstowcs(outstr, str, maxbytes) ;
+  }
+
+  setlocale(LC_CTYPE, curloc) ; // reset locale
+  
+  if (ret < 0){
+    throw MqttOutOfRange("failed to convert utf8 to wide string") ;
+  }
+  
+  return ret ;  
 }
 
 

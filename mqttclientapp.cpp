@@ -60,17 +60,28 @@ void siginterrupt(int sig)
   exit(EXIT_SUCCESS) ;
 }
 
-void connect()
+void connect(char params[][30], int count)
 {
   uint8_t gw = 0;
+  bool will = false ;
   
   if (!pradio->get_known_gateway(&gw)){
     printf("Cannot connect, no known gateway\n") ;
     return;
   }
 
+  if (count >= 2){
+    // Will set
+    will = true ;
+    pradio->set_willtopic(params[0], 3);
+    pradio->set_willmessage((uint8_t *)params[1], strlen(params[1])) ;
+  }else{
+    pradio->set_willtopic((char *)NULL,0) ;
+    pradio->set_willmessage(NULL,0) ;
+  }
+  
   try{
-    if (!pradio->connect(gw, true, true, 10)){
+    if (!pradio->connect(gw, will, true, 300)){
       printf("Connecting to gateway %u\n", gw) ;
     }
   }catch(MqttConnectErr &e){
@@ -78,13 +89,38 @@ void connect()
   }
 }
 
-void search()
+void search(char params[][30], int count)
 {
   if(pradio->searchgw(1)){
     printf("Sending gateway search...\n");
   }else{
     printf("Failed to send search!\n");
   }
+}
+void disconnect(char params[][30], int count)
+{
+  uint16_t  sleep_duration = 0 ;
+  for (int i=0; i <count; i++){
+    printf("PARAM %d: %s\n", i, params[i]);
+  }
+  if (count > 0){
+    sleep_duration = (uint16_t)atoi(params[0]);
+  }
+  if (pradio->disconnect(sleep_duration)){
+    printf("Disconnecting from server, sleeping %u\n", sleep_duration);
+  }else{
+    printf("Failed to disconnect from server\n");
+  }
+}
+
+void rf24_state(char params[][30], int count)
+{
+  print_state(pradio) ;
+}
+
+void gwinfo (char params[][30], int count)
+{
+  pradio->print_gw_table();
 }
 
 int main(int argc, char **argv)
@@ -100,7 +136,10 @@ int main(int argc, char **argv)
   Command commands[] = {Command("connect",&connect,true),
 			Command("disconnect",NULL,true),
 			Command("topic",NULL,true),
-			Command("search",&search,true)} ;
+			Command("search",&search,true),
+			Command("rf24", &rf24_state, true),
+			Command("disconnect", &disconnect, true),
+			Command("gwinfo", &gwinfo, true)} ;
   
   struct sigaction siginthandle ;
 
@@ -221,37 +260,65 @@ int main(int argc, char **argv)
     mqtt.set_client_id("CL") ;
 
   mqtt.initialise(ADDR_WIDTH, rf24broadcast, rf24address) ;
-
-  print_state(&mqtt) ;  
   
-  time_t now = time(NULL) ;
-  time_t last_search = 0, last_register = 0 ;
-  const uint16_t search_interval = 5 ; // sec
-  const uint16_t ping_interval = 30 ; // sec
-  bool ret = false ;
-  bool gateway_known = false ;
-  uint8_t gwhandle =0;
-  
+  int command_count = sizeof(commands) / sizeof(Command);
+  const int max_params = 10 ;
+  const int max_param_text = 30 ;
+  char parameters[max_params][max_param_text];
+  int param_count = 0;
+  int param_index = 0;
+  Command *pFound = NULL ;
   // Working loop
   for ( ; ; ){
-    now = time(NULL) ;
-
     while (inputAvailable()){
       char c;
       read(STDIN_FILENO, &c, 1);
       switch(c){
       case ' ':
+      case '\t':
+	if (pFound){
+	  if (param_index > 0){
+	    parameters[param_count][param_index] = '\0';
+	    if (param_count < max_params ){
+	      param_count++ ;
+	    }
+	  }
+	}
+	param_index = 0 ;
+	break;
+      case '\n':
+	for (int i=0; i < command_count; i++){
+	  commands[i].reset();
+	}
+	if (pFound){
+	  if (param_index > 0){
+	    parameters[param_count][param_index] = '\0';
+	    param_count++ ;
+	  }
+	  pFound->cmd(parameters, param_count) ;
+	}
+	
+	param_count = 0 ;
+	param_index = 0 ;
+	pFound = NULL;
+	break;
+      case '\r':
 	break;
       default:
-	for (int i=0; i < 4; i++){
-	  if(commands[i].found(c)){
-	    commands[i].cmd();
-	    commands[i].reset();
+	if (pFound){
+	  if (param_index < max_param_text-1){
+	    parameters[param_count][param_index++] = c ;
+	  }
+	}else{
+	  for (int i=0; i < command_count; i++){
+	    if(commands[i].found(c)){
+	      pFound = &commands[i] ;
+	    }
 	  }
 	}
 	break;
       }
-      // write(STDOUT_FILENO, &c, 1);
+      
     }
     
     mqtt.manage_connections() ;
