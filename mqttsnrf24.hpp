@@ -78,50 +78,89 @@ public:
 class MqttGwInfo{
 public:
   MqttGwInfo(){
-    allocated=false;
-    active=false;
-    gw_id=0;
-    address_length=0;
-    m_ad_time = 0 ;
-    m_ad_duration = 0 ;
-    advertising = false ;
-    m_lastactivity = 0 ;
-    m_keepalive = 0 ;
-  }
-  uint8_t address[MAX_RF24_ADDRESS_LEN] ;
-  uint8_t address_length ;
-  uint8_t gw_id ;
-  bool active ;
-  bool allocated ;
-  bool advertising ;
-  void advertised(uint16_t t){
-    advertising = true ;
-    m_ad_time = time(NULL) ;
-    m_lastactivity = m_ad_time ; // update activity as well
-    m_ad_duration = t + 60 ; // add 1 min grace
-  
-  }
-  uint16_t get_keepalive(){return m_keepalive;}
-  void keepalive(uint16_t t){
-    m_keepalive = t ;
-  }
-  bool advertised_expired(){
-    return (advertising && time(NULL) > (m_ad_time + m_ad_duration)) ;
-  }
-  void update_activity(){
-    m_lastactivity = time(NULL);
-  }
-  bool is_active(){
-    return (time(NULL) > m_lastactivity + m_keepalive);
+    reset();
   }
 
+  void reset(){
+    m_allocated=false;
+    m_permanent = false;
+    m_gwid=0;
+    m_address_length=0;
+    m_ad_time = 0 ;
+    m_ad_duration = 0 ;
+    m_advertising = false ;
+    m_lastactivity = 0 ;
+    m_active = false ;
+  }    
+  
+  bool is_advertising(){
+    return m_advertising;
+  }
+  
+  void advertised(uint16_t t){
+    m_advertising = true ;
+    m_active = true ;
+    m_ad_time = time(NULL) ;
+    m_lastactivity = m_ad_time ; // update activity as well
+    m_ad_duration = t ;
+  
+  }
+  void set_permanent(bool perm){m_permanent = perm;}
+  bool is_permanent(){return m_permanent ;}
+
+  //  bool advertised_expired(){
+  // // Add 1 min grace
+  // return (m_advertising && time(NULL) > (m_ad_time + m_ad_duration + 60)) ;
+  //}
+  void update_activity(){
+    m_lastactivity = time(NULL);
+    m_active = true ;
+  }
+  bool is_active(){
+    if (m_permanent) return true ; // always active
+
+    if (m_advertising){
+      // Add 1 min grace
+      return time(NULL) < m_lastactivity + m_ad_duration + 60;
+    } 
+
+    return m_active ;
+  }
+  void set_active(bool active){m_active = active ;}
+
+  bool match(uint8_t *addr){
+    for (uint8_t addri=0; addri < m_address_length; addri++){
+      if (m_address[addri] != addr[addri])
+	return false;
+    }
+    return true ;
+  }
+
+  void set_address(uint8_t *address, uint8_t len){
+    m_address_length = len ;
+    memcpy(m_address, address, m_address_length) ;
+  }
+  uint8_t *get_address(){return m_address;}
+  
   uint16_t advertising_duration(){return m_ad_duration;}
+
+  bool is_allocated(){return m_allocated;}
+  void set_allocated(bool alloc){m_allocated = alloc;}
+
+  uint8_t get_gwid(){return m_gwid;}
+  void set_gwid(uint8_t gwid){m_gwid = gwid;}
   
 protected:
+  bool m_active ;
+  uint8_t m_address[MAX_RF24_ADDRESS_LEN] ;
+  uint8_t m_address_length ;
+  uint8_t m_gwid;
   time_t m_ad_time ;
   uint16_t m_ad_duration ;
   time_t m_lastactivity ;
-  uint16_t m_keepalive ;
+  bool m_permanent ;
+  bool m_allocated ;
+  bool m_advertising ;
 };
 
 class MqttSnRF24 : public BufferedRF24{

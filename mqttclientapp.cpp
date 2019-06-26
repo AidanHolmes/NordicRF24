@@ -81,7 +81,7 @@ void connect(char params[][30], int count)
   }
   
   try{
-    if (!pradio->connect(gw, will, true, 300)){
+    if (!pradio->connect(gw, will, true, 30)){
       printf("Connecting to gateway %u\n", gw) ;
     }
   }catch(MqttConnectErr &e){
@@ -123,6 +123,11 @@ void gwinfo (char params[][30], int count)
   pradio->print_gw_table();
 }
 
+void addgw (char params[][30], int count)
+{
+  
+}
+
 int main(int argc, char **argv)
 {
   const char usage[] = "Usage: %s -c ce -i irq -a address -b address [-n clientname] [-o channel] [-s 250|1|2] [-x]\n" ;
@@ -139,7 +144,8 @@ int main(int argc, char **argv)
 			Command("search",&search,true),
 			Command("rf24", &rf24_state, true),
 			Command("disconnect", &disconnect, true),
-			Command("gwinfo", &gwinfo, true)} ;
+			Command("gwinfo", &gwinfo, true),
+			Command("addgw", &addgw, true)} ;
   
   struct sigaction siginthandle ;
 

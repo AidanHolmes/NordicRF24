@@ -121,6 +121,8 @@ public:
 
   void print_gw_table() ;
 
+  bool add_gateway(uint8_t *gateway_address, uint8_t gwid, uint16_t ad_duration, bool perm=false);
+
 protected:
 
   // Connection state handling for clients
@@ -147,8 +149,8 @@ protected:
   MqttGwInfo* get_gateway_address(uint8_t *gwaddress) ;
   MqttGwInfo* get_available_gateway();
   uint8_t *get_gateway_address();
-  bool add_gateway(uint8_t *gateway_address, uint8_t gwid, uint16_t ad_duration);
   bool update_gateway(uint8_t *gateway_address, uint8_t gwid, uint16_t ad_duration);
+  bool del_gateway(uint8_t gwid) ;
 
   char m_szclient_id[MAX_MQTT_CLIENTID+1] ; // Client ID
   MqttGwInfo m_gwinfo[MAX_GATEWAYS] ;

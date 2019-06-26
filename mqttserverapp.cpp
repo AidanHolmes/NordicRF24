@@ -163,7 +163,7 @@ int main(int argc, char **argv)
   mqtt.set_2_byte_crc(true) ;
   mqtt.set_data_rate(opt_speed) ; 
 
-  mqtt.set_gateway_id(888) ;
+  mqtt.set_gateway_id(88) ;
 
   mqtt.initialise(ADDR_WIDTH, rf24broadcast, rf24address) ;
   mqtt.set_advertise_interval(400);

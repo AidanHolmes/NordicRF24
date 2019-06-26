@@ -431,7 +431,13 @@ void ServerMqttSnRF24::received_pingreq(uint8_t *sender_address, uint8_t *data, 
     DPRINT("PINGREQ\n") ;
   }
   #endif
- 
+  pthread_mutex_lock(&m_rwlock) ;
+  MqttConnection *con = search_connection_address(sender_address) ;
+  if (con){
+    con->update_activity() ;
+  }
+  pthread_mutex_unlock(&m_rwlock) ;
+  
   addrwritemqtt(sender_address, MQTT_PINGRESP, NULL, 0) ;
  
 }
@@ -850,7 +856,9 @@ void ServerMqttSnRF24::manage_client_connection(MqttConnection *p)
     writemqtt(p, MQTT_DISCONNECT, NULL, 0) ;
     send_will(p) ;
     return ;
-  }else{
+  }
+  /* Don't ping the client, just use pingreq from client to update activity
+  else{
     // Connection should be valid
     if (p->send_another_ping()){
       DPRINT("Sending a ping to %s\n", p->get_client_id()) ;
@@ -858,6 +866,7 @@ void ServerMqttSnRF24::manage_client_connection(MqttConnection *p)
       if (!r) DPRINT("Ping to client failed\n") ;
     }
   }
+  */
 }
 
 void ServerMqttSnRF24::connection_watchdog(MqttConnection *p)
