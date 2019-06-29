@@ -632,39 +632,45 @@ bool ClientMqttSnRF24::searchgw(uint8_t radius)
 uint16_t ClientMqttSnRF24::register_topic(const wchar_t *topic)
 {
   char sztopic[MQTT_TOPIC_MAX_BYTES] ;
-  uint8_t buff[4 + MQTT_TOPIC_MAX_BYTES] ;
-  size_t len = 0 ;
-  uint16_t ret = 0 ;
-  
+   
   try{
-    len = wchar_to_utf8(topic, sztopic, (unsigned)(MQTT_TOPIC_SAFE_BYTES + (MAX_RF24_ADDRESS_LEN - m_address_len)));
+    wchar_to_utf8(topic, sztopic, (unsigned)(MQTT_TOPIC_SAFE_BYTES + (MAX_RF24_ADDRESS_LEN - m_address_len)));
   }catch(MqttOutOfRange &e){
     DPRINT("Throwing exception - cannot convert REGISTER topic to UTF-8\n") ;
     throw ;
   }
 
+  return register_topic(sztopic) ;
+}
+
+uint16_t ClientMqttSnRF24::register_topic(const char *topic)
+{
+  uint16_t ret = 0, len = 0 ;
+  uint8_t buff[4 + MQTT_TOPIC_MAX_BYTES] ;
+
   if (m_client_connection.is_connected()){
     pthread_mutex_lock(&m_rwlock) ;
     uint16_t mid = m_client_connection.get_new_messageid() ;
     // Register the topic. Return value is zero if topic is new
-    ret = m_client_connection.topics.reg_topic(sztopic, mid) ;
+    ret = m_client_connection.topics.reg_topic(topic, mid) ;
     if(ret > 0){
       DPRINT("reg_topic returned an existing topic ID %u\n", ret) ;
       return ret ; // already exists
     }
     DPRINT("reg_topic has registered a new topic %u\n", mid) ;
-    
+
+    len = strlen(topic) + 1;
     pthread_mutex_unlock(&m_rwlock) ;
     buff[0] = 0 ;
     buff[1] = 0 ; // topic ID set to zero
     buff[2] = mid >> 8 ; // MSB
     buff[3] = mid & 0x00FF;
-    memcpy(buff+4, sztopic, len) ;
+    memcpy(buff+4, topic, len) ;
     
     if (writemqtt(&m_client_connection, MQTT_REGISTER, buff, 4+len)){
       // Cache the message
       m_client_connection.set_activity(MqttConnection::Activity::registering) ;
-      return true ;
+      return 0;
     }
   }
   // Connection timed out or not connected
@@ -759,7 +765,19 @@ bool ClientMqttSnRF24::publish_noqos(uint8_t gwid, uint16_t topicid, uint8_t top
   return true ;
 }
 
-bool ClientMqttSnRF24::publish(uint16_t topicid, uint8_t qos, bool retain, uint8_t *payload, uint8_t payload_len)
+bool ClientMqttSnRF24::publish(uint8_t qos, const char *sztopic, const uint8_t *payload, uint8_t payload_len, bool retain)
+{
+  uint16_t topicid = 0;
+  // This will send messages with a short topic
+  if (strlen(sztopic) != 2) return false ; // must be 2 bytes
+  topicid = (sztopic[0] << 8) | sztopic[1] ;
+  return publish(qos,
+		 topicid,
+		 FLAG_SHORT_TOPIC_NAME,
+		 payload, payload_len, retain) ;
+}
+
+bool ClientMqttSnRF24::publish(uint8_t qos, uint16_t topicid, uint16_t topictype, const uint8_t *payload, uint8_t payload_len, bool retain)
 {
   uint8_t buff[MQTT_PAYLOAD_WIDTH-2] ;
   
@@ -770,7 +788,7 @@ bool ClientMqttSnRF24::publish(uint16_t topicid, uint8_t qos, bool retain, uint8
     (qos==0?FLAG_QOS0:0) |
     (qos==1?FLAG_QOS1:0) |
     (qos==2?FLAG_QOS2:0) |
-    FLAG_NORMAL_TOPIC_ID;
+    topictype;
   buff[1] = topicid >> 8 ;
   buff[2] = topicid & 0x00FF ;
   uint16_t mid = m_client_connection.get_new_messageid() ;
@@ -785,7 +803,7 @@ bool ClientMqttSnRF24::publish(uint16_t topicid, uint8_t qos, bool retain, uint8
   memcpy(buff+5,payload, payload_len);
   
   if (writemqtt(&m_client_connection, MQTT_PUBLISH, buff, len)){
-    m_client_connection.set_activity(MqttConnection::Activity::publishing);
+    if (qos > 0) m_client_connection.set_activity(MqttConnection::Activity::publishing);
     // keep a copy for retries. Set the DUP flag for retries
     buff[0] |= FLAG_DUP;
     return true ;
@@ -940,6 +958,11 @@ void ClientMqttSnRF24::set_willmessage(const uint8_t *message, uint8_t len)
 
 MqttGwInfo* ClientMqttSnRF24::get_available_gateway()
 {
+  if (m_client_connection.is_connected()){
+    uint8_t gwid = m_client_connection.get_gwid();
+    return get_gateway(gwid) ;
+  }
+
   for (unsigned int i=0; i < MAX_GATEWAYS;i++){
     if (m_gwinfo[i].is_allocated() && m_gwinfo[i].is_active()){
       // return the first known gateway
@@ -986,6 +1009,11 @@ uint8_t *ClientMqttSnRF24::get_gateway_address()
 
 bool ClientMqttSnRF24::get_known_gateway(uint8_t *gwid)
 {
+  if (m_client_connection.is_connected()){
+    *gwid = m_client_connection.get_gwid();
+    return true ;
+  }
+
   MqttGwInfo *gw = get_available_gateway();
 
   if (!gw) return false;

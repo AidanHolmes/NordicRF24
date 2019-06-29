@@ -203,7 +203,10 @@ void MqttTopicCollection::iterate_first_topic()
 
 MqttTopic* MqttTopicCollection::get_topic(uint16_t topicid)
 {
-  if (!topics) return NULL ;
+  if (!topics){
+    DPRINT("No topics in collection to find from get_topic");
+    return NULL ;
+  }
   for (MqttTopic *it = topics; it; it = it->next()){
     if (it->get_id() == topicid) return it ;
   }

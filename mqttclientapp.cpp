@@ -125,7 +125,79 @@ void gwinfo (char params[][30], int count)
 
 void addgw (char params[][30], int count)
 {
+  uint8_t rf24address[ADDR_WIDTH] ;
+
+  if (count < 2) return ;
   
+  if (!straddr_to_addr(params[1], rf24address, ADDR_WIDTH)){
+    fprintf(stderr, "Invalid address\n") ;
+    return;
+  }
+
+  uint8_t gwid = atoi(params[0]) ;
+
+  if (pradio->add_gateway(rf24address, gwid, 0, true)){
+    printf("Added new gateway %u, address %s\n", gwid, params[1]) ;
+  }else{
+    fprintf(stderr, "Failed to add perm gateway %u with address %s\n", gwid, params[1]) ;
+  }
+}
+
+void publish(char params[][30], int count)
+{
+  if (count < 3){
+    printf("publish qos topic|topicid value [retain]\n") ;
+    return ;
+  }
+
+  bool b_strtopic = false, b_retain = false; 
+
+  uint8_t gwid = 0;
+  if (!pradio->get_known_gateway(&gwid)){
+    fprintf(stderr, "No known gateway to connect to\n") ;
+    return ;
+  }
+
+  int qos = atoi(params[0]);
+  for (char *p = params[1]; *p; p++){
+    if (!(*p >= '0' && *p <= '9')){
+      b_strtopic = true ;
+      break;
+    }
+  }
+  if (strlen(params[1]) != 2 && b_strtopic){
+    fprintf(stderr, "Incorrect length of short topic\n");
+  }
+
+  if (count >= 4 && strcasecmp(params[3], "retain") == 0) b_retain = true ;
+  printf("Publishing with QoS: %d, topic: %s, retaining: %s\n", qos, params[1], b_retain?"yes":"no");
+      
+  if (qos == -1){
+    if (b_strtopic){
+      pradio->publish_noqos(gwid, params[1], (uint8_t *)params[2], strlen(params[2]), b_retain);
+    }else{
+      pradio->publish_noqos(gwid, atoi(params[1]), 1, (uint8_t *)params[2], strlen(params[2]), b_retain);
+    }
+  }else{
+    if (b_strtopic){
+      pradio->publish(qos, params[1], (uint8_t *)params[2], strlen(params[2]), b_retain);
+    }else{
+      pradio->publish(qos, (uint16_t)atoi(params[1]), 1, (uint8_t *)params[2], strlen(params[2]), b_retain);
+    }
+  }
+}
+
+void register_topic(char params[][30], int count)
+{
+  if (count < 1){
+    printf("register topicname\n") ;
+    return ;
+  }
+
+  uint16_t ret = pradio->register_topic(params[0]);
+  if (ret != 0){
+    printf("%s already registered with ID: %u\n", params[0], ret) ;
+  }  
 }
 
 int main(int argc, char **argv)
@@ -145,7 +217,9 @@ int main(int argc, char **argv)
 			Command("rf24", &rf24_state, true),
 			Command("disconnect", &disconnect, true),
 			Command("gwinfo", &gwinfo, true),
-			Command("addgw", &addgw, true)} ;
+			Command("addgw", &addgw, true),
+			Command("publish", &publish, true),
+			Command("register", &register_topic, true)} ;
   
   struct sigaction siginthandle ;
 

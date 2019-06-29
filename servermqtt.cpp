@@ -126,21 +126,6 @@ void ServerMqttSnRF24::received_publish(uint8_t *sender_address, uint8_t *data, 
   buff[2] = data[3] ; // replicate message id
   buff[3] = data[4] ; // replicate message id
 
-  MqttConnection *con = search_connection_address(sender_address);
-  if (!con){
-    EPRINT("No registered connection for client\n") ;
-    return;
-  }
-  
-  DPRINT("PUBLISH: {Flags = %X, QoS = %u, Topic ID = %u, Mess ID = %u\n",
-	 data[0], qos, topicid, messageid) ;
-
-  if (!m_mosquitto_initialised){
-    EPRINT("Gateway is not connected to the Mosquitto server to process Publish\n") ;
-    buff[4] = MQTT_RETURN_CONGESTION;
-    writemqtt(con, MQTT_PUBACK, buff, 5) ;
-    return ;
-  }
   int mosqos = 0 ;
   int mid = 0 ;
   switch(qos){
@@ -154,14 +139,27 @@ void ServerMqttSnRF24::received_publish(uint8_t *sender_address, uint8_t *data, 
     mosqos = 2 ;
     break;
   case FLAG_QOSN1:
-    mosqos = 0 ;
+    mosqos = -1 ;
+  }
+  
+  DPRINT("PUBLISH: {Flags = %X, QoS = %d, Topic ID = %u, Mess ID = %u\n",
+	 data[0], mosqos, topicid, messageid) ;
+
+  if (!m_mosquitto_initialised){
+    EPRINT("Gateway is not connected to the Mosquitto server to process Publish\n") ;
+    buff[4] = MQTT_RETURN_CONGESTION;
+    addrwritemqtt(sender_address, MQTT_PUBACK, buff, 5) ;
+    return ;
+  }
+  
+  if (mosqos == -1){
     // Cannot process normal topic IDs
     // An error shouldn't really be sent for -1 QoS messages, but
     // it cannot hurt as the client is likely to just ignore
     if (topic_type == FLAG_NORMAL_TOPIC_ID){
-      EPRINT("Client sent normal topic ID %u for -1 QoS message\n", topicid) ;
+      EPRINT("Client sent normal topic ID %u for -1 QoS message\n", topicid);
       buff[4] = MQTT_RETURN_INVALID_TOPIC ;
-      writemqtt(con, MQTT_PUBACK, buff, 5) ;
+      addrwritemqtt(sender_address, MQTT_PUBACK, buff, 5) ;
       return ;
     }
     // Just publish and forget for QoS -1
@@ -170,25 +168,27 @@ void ServerMqttSnRF24::received_publish(uint8_t *sender_address, uint8_t *data, 
       szshort[0] = (char)(buff[0]);
       szshort[1] = (char)(buff[1]) ;
       szshort[2] = '\0';
+      // Publish with QoS 1 to server
       ret = mosquitto_publish(m_pmosquitto,
 			      &mid,
 			      szshort,
 			      payload_len,
-			      payload, 0,
+			      payload, 1,
 			      data[0] & FLAG_RETAIN) ;
     }else if(topic_type == FLAG_DEFINED_TOPIC_ID){
       MqttTopic *t = m_predefined_topics.get_topic(topicid);
       if (!t){
 	DPRINT("Cannot find topic %u in the pre-defined list\n", topicid) ;
 	buff[4] = MQTT_RETURN_INVALID_TOPIC ;
-	writemqtt(con, MQTT_PUBACK, buff, 5) ;
+	addrwritemqtt(sender_address, MQTT_PUBACK, buff, 5) ;
 	return ;
       }
+      // Publish with QoS 1 to server
       ret = mosquitto_publish(m_pmosquitto,
 			      &mid,
 			      t->get_topic(),
 			      payload_len,
-			      payload, 0,
+			      payload, 1,
 			      data[0] & FLAG_RETAIN) ;	
     }
     if (ret != MOSQ_ERR_SUCCESS)
@@ -196,8 +196,15 @@ void ServerMqttSnRF24::received_publish(uint8_t *sender_address, uint8_t *data, 
     return ;
   }
 
+  MqttConnection *con = search_connection_address(sender_address);
+  if (!con){
+    EPRINT("No registered connection for client\n") ;
+    return;
+  }
+  
+  con->set_activity(MqttConnection::Activity::none);
+  
   // Store the publish entities for transmission to the server
-  // The server can only handle one publish transaction at a time from a client
   con->set_pub_entities(topicid,
 			messageid,
 			topic_type,
@@ -205,14 +212,17 @@ void ServerMqttSnRF24::received_publish(uint8_t *sender_address, uint8_t *data, 
 			payload_len,
 			payload,
 			data[0] & FLAG_RETAIN);
-
   if (!server_publish(con)){
     EPRINT("Could not complete the PUBLISH message with the MQTT server\n") ;
     buff[4] = MQTT_RETURN_CONGESTION;
     writemqtt(con, MQTT_PUBACK, buff, 5) ;
-    return ;      
+    return ;  
   }
-  con->set_activity(MqttConnection::Activity::publishing);
+  
+  // QoS 0 and 1 don't require orchestration of return connections, only 2 does
+  if (mosqos == 2){
+    con->set_activity(MqttConnection::Activity::publishing);
+  }
 }
 
 bool ServerMqttSnRF24::server_publish(MqttConnection *con)
@@ -241,7 +251,7 @@ bool ServerMqttSnRF24::server_publish(MqttConnection *con)
 			    szshort,
 			    con->get_pub_payload_len(),
 			    con->get_pub_payload(),
-			    con->get_pub_qos(),
+			    1,
 			    con->get_pub_retain()) ;
     if (ret != MOSQ_ERR_SUCCESS){
       con->set_activity(MqttConnection::Activity::none);
@@ -251,7 +261,7 @@ bool ServerMqttSnRF24::server_publish(MqttConnection *con)
     }
     con->set_mosquitto_mid(mid) ;
     
-  }else if(con->get_pub_topic_type()  == FLAG_DEFINED_TOPIC_ID){
+  }else if(con->get_pub_topic_type() == FLAG_DEFINED_TOPIC_ID){
     MqttTopic *topic = m_predefined_topics.get_topic(topicid);
     if (!topic){
       EPRINT("Predefined topic id %u unrecognised\n", topicid);
@@ -265,7 +275,7 @@ bool ServerMqttSnRF24::server_publish(MqttConnection *con)
 			    topic->get_topic(),
 			    con->get_pub_payload_len(),
 			    con->get_pub_payload(),
-			    con->get_pub_qos(),
+			    1,
 			    con->get_pub_retain()) ;
     if (ret != MOSQ_ERR_SUCCESS){
       EPRINT("Mosquitto publish failed with code %d\n", ret);
@@ -290,7 +300,7 @@ bool ServerMqttSnRF24::server_publish(MqttConnection *con)
 			    topic->get_topic(),
 			    con->get_pub_payload_len(),
 			    con->get_pub_payload(),
-			    con->get_pub_qos(),
+			    1,
 			    con->get_pub_retain()) ;
     if (ret != MOSQ_ERR_SUCCESS){
       EPRINT("Mosquitto publish failed with code %d\n", ret);
@@ -319,7 +329,7 @@ void ServerMqttSnRF24::received_pubrel(uint8_t *sender_address, uint8_t *data, u
   if (con->get_activity() != MqttConnection::Activity::publishing){
     EPRINT("PUBREL received for a non-publishing client\n") ;
     return ;
-    }
+  }
   
   con->update_activity() ;
   con->set_activity(MqttConnection::Activity::none) ; // reset activity
@@ -470,11 +480,13 @@ MqttConnection* ServerMqttSnRF24::search_connection(const char *szclientid)
 
 MqttConnection* ServerMqttSnRF24::search_mosquitto_id(int mid)
 {
+  DPRINT("Looking for MID %d\n", mid) ;
   MqttConnection *p = NULL ;
   for(p = m_connection_head; p != NULL; p=p->next){
+    DPRINT("Looking for mid %d. Found mid: %d, is connected: %s, activity: %d\n", mid, p->get_mosquitto_mid(), p->is_connected()?"yes":"no", p->get_activity()) ;
     if (p->is_connected() &&
-	p->get_activity() != MqttConnection::Activity::none &&
 	p->get_mosquitto_mid() == mid){
+      DPRINT("This connection matches MID\n") ;
       break;
     }
   }
@@ -770,6 +782,13 @@ void ServerMqttSnRF24::initialise(uint8_t address_len, uint8_t *broadcast, uint8
   if (ret != MOSQ_ERR_SUCCESS)
     throw MqttException ("Cannot start mosquitto loop") ;
 
+#ifdef DEBUG
+  int major, minor, revision ;
+  mosquitto_lib_version(&major, &minor, &revision) ;
+  
+  DPRINT("Mosquitto server connected %d.%d.%d\n", major, minor, revision) ;
+#endif
+  
   mosquitto_connect_callback_set(m_pmosquitto, gateway_connect_callback) ;
   mosquitto_disconnect_callback_set(m_pmosquitto, gateway_disconnect_callback);
   mosquitto_publish_callback_set(m_pmosquitto, gateway_publish_callback) ;
@@ -786,7 +805,10 @@ void ServerMqttSnRF24::gateway_publish_callback(struct mosquitto *m,
   
   ServerMqttSnRF24 *gateway = (ServerMqttSnRF24*)data ;
   MqttConnection *con = gateway->search_mosquitto_id(mid) ;
-  if (!con) return ;
+  if (!con){
+    EPRINT("Cannot find Mosquitto ID %d", mid) ;
+    return ;
+  }
 
   uint8_t buff[5] ; // Response buffer
   uint16_t topicid = con->get_pub_topicid() ;
@@ -800,11 +822,14 @@ void ServerMqttSnRF24::gateway_publish_callback(struct mosquitto *m,
   case 1:
     buff[4] = MQTT_RETURN_ACCEPTED ;
     gateway->writemqtt(con, MQTT_PUBACK, buff, 5) ;
+    //con->set_activity(MqttConnection::Activity::none);
     break ;
   case 2:
     gateway->writemqtt(con, MQTT_PUBREC, buff+2, 2) ;
+    //con->set_activity(MqttConnection::Activity::publishing);
     break ;
   default:
+    con->set_activity(MqttConnection::Activity::none);
     EPRINT("Invalid QoS %d\n", con->get_pub_qos()) ;
   }
 }

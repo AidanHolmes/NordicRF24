@@ -88,24 +88,34 @@ public:
 		     const uint8_t *payload,
 		     uint8_t payload_len,
 		     bool retain);
+
+  // Publish for connected clients. Doesn't support -1 QoS
+  // Sets a 2 letter short topic
+  // Returns false if cannot send message or client disconnected
+  bool publish(uint8_t qos,
+	       const char* sztopic,
+	       const uint8_t *payload,
+	       uint8_t payload_len,
+	       bool retain);
   
   // Publish for connected clients. Doesn't support -1 QoS
-  // Only pulishes normal registered topics
+  // Supports topic ids on the connection or permanent on server
   // Returns false if message cannot be sent or client not connected
-  bool publish(uint16_t topicid,
-	       uint8_t qos,
-	       bool retain,
-	       uint8_t *payload,
-	       uint8_t payload_len);
+  bool publish(uint8_t qos,
+	       uint16_t topicid,
+	       uint16_t topictype,
+	       const uint8_t *payload,
+	       uint8_t payload_len,
+	       bool retain);
   
   // Ping for use by a client to check a gateway is alive
   // Returns false if gateway is unknown or transmit failed (with ACK)
   bool ping(uint8_t gw);
 
-  // Client call
   // Register a topic with the server. Returns the topic id to use
   // when publishing messages. Returns 0 if the register fails.
   uint16_t register_topic(const wchar_t *topic) ;
+  uint16_t register_topic(const char *topic) ;
 
   // Handles connections to gateways or to clients. Dispatches queued messages
   // Will return false if a queued message cannot be dispatched.
