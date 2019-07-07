@@ -83,6 +83,13 @@
 
 ServerMqttSnRF24::ServerMqttSnRF24()
 {
+  pthread_mutexattr_t attr ;
+  pthread_mutexattr_init(&attr);
+  pthread_mutexattr_settype(&attr, PTHREAD_MUTEX_ERRORCHECK) ;
+  if (pthread_mutex_init(&m_mosquittolock, &attr) != 0){
+    throw RF24Exception("Mutex creation failed") ;
+  }
+
   m_gwid = 0 ;
 
   m_connection_head = NULL ;
@@ -101,6 +108,7 @@ ServerMqttSnRF24::~ServerMqttSnRF24()
   if (m_mosquitto_initialised){
     mosquitto_lib_cleanup() ;
   }
+  pthread_mutex_destroy(&m_mosquittolock) ;
 }
 
 void ServerMqttSnRF24::set_advertise_interval(uint16_t t)
@@ -192,8 +200,9 @@ void ServerMqttSnRF24::received_publish(uint8_t *sender_address, uint8_t *data, 
 			      data[0] & FLAG_RETAIN) ;	
     }
     if (ret != MOSQ_ERR_SUCCESS)
-      EPRINT("Mosquitto publish failed with code %d\n", ret) ;
-    return ;
+      EPRINT("Mosquitto QoS -1 publish failed with code %d\n", ret) ;
+    DPRINT("Sending Mosquitto QoS -1 publish with mid %d\n", mid) ;
+    return ;    
   }
 
   MqttConnection *con = search_connection_address(sender_address);
@@ -240,29 +249,19 @@ bool ServerMqttSnRF24::server_publish(MqttConnection *con)
   buff[1] = (topicid & 0x00FF) ; // replicate topic id 
   buff[2] = messageid >> 8 ; // replicate message id
   buff[3] = (messageid & 0x00FF) ; // replicate message id
-  
-  if (con->get_pub_topic_type() == FLAG_SHORT_TOPIC_NAME){
-    char szshort[3] ;
+
+  char *ptopic = NULL ;
+  char szshort[3] ;
+  MqttTopic *topic = NULL ;
+  switch(con->get_pub_topic_type()){
+  case FLAG_SHORT_TOPIC_NAME:
     szshort[0] = (char)(buff[0]);
     szshort[1] = (char)(buff[1]) ;
     szshort[2] = '\0';
-    ret = mosquitto_publish(m_pmosquitto,
-			    &mid,
-			    szshort,
-			    con->get_pub_payload_len(),
-			    con->get_pub_payload(),
-			    1,
-			    con->get_pub_retain()) ;
-    if (ret != MOSQ_ERR_SUCCESS){
-      con->set_activity(MqttConnection::Activity::none);
-      
-      EPRINT("Mosquitto publish failed with code %d\n", ret);
-      return false ;
-    }
-    con->set_mosquitto_mid(mid) ;
-    
-  }else if(con->get_pub_topic_type() == FLAG_DEFINED_TOPIC_ID){
-    MqttTopic *topic = m_predefined_topics.get_topic(topicid);
+    ptopic = szshort ;
+    break;
+  case FLAG_DEFINED_TOPIC_ID:
+    topic = m_predefined_topics.get_topic(topicid);
     if (!topic){
       EPRINT("Predefined topic id %u unrecognised\n", topicid);
       buff[4] = MQTT_RETURN_INVALID_TOPIC ;
@@ -270,24 +269,11 @@ bool ServerMqttSnRF24::server_publish(MqttConnection *con)
       con->set_activity(MqttConnection::Activity::none);
       return false;
     }
-    ret = mosquitto_publish(m_pmosquitto,
-			    &mid,
-			    topic->get_topic(),
-			    con->get_pub_payload_len(),
-			    con->get_pub_payload(),
-			    1,
-			    con->get_pub_retain()) ;
-    if (ret != MOSQ_ERR_SUCCESS){
-      EPRINT("Mosquitto publish failed with code %d\n", ret);
-      con->set_activity(MqttConnection::Activity::none);
-      buff[4] = MQTT_RETURN_CONGESTION ;
-      writemqtt(con, MQTT_PUBACK, buff, 5) ;
-      return false ;
-    }
-    con->set_mosquitto_mid(mid) ;
     
-  }else{ // Normal Topic ID
-    MqttTopic *topic = con->topics.get_topic(topicid) ;
+    ptopic = topic->get_topic() ;
+    break;
+  case FLAG_NORMAL_TOPIC_ID:
+    topic = con->topics.get_topic(topicid) ;
     if (!topic){
       EPRINT("Client topic id %d unknown to gateway\n", topicid) ;
       buff[4] = MQTT_RETURN_INVALID_TOPIC ;
@@ -295,23 +281,36 @@ bool ServerMqttSnRF24::server_publish(MqttConnection *con)
       con->set_activity(MqttConnection::Activity::none);
       return false;
     }
-    ret = mosquitto_publish(m_pmosquitto,
-			    &mid,
-			    topic->get_topic(),
-			    con->get_pub_payload_len(),
-			    con->get_pub_payload(),
-			    1,
-			    con->get_pub_retain()) ;
-    if (ret != MOSQ_ERR_SUCCESS){
-      EPRINT("Mosquitto publish failed with code %d\n", ret);
-      buff[4] = MQTT_RETURN_CONGESTION ;
-      writemqtt(con, MQTT_PUBACK, buff, 5) ;
-      con->set_activity(MqttConnection::Activity::none);
-      return false ;
-    }
-    con->set_mosquitto_mid(mid) ;
     
+    ptopic = topic->get_topic() ;
+    break;
+  default:
+    con->set_activity(MqttConnection::Activity::none);
+    return false ;
   }
+
+  // Lock the publish and recording of MID 
+  pthread_mutex_lock(&m_mosquittolock) ;
+  ret = mosquitto_publish(m_pmosquitto,
+			  &mid,
+			  ptopic,
+			  con->get_pub_payload_len(),
+			  con->get_pub_payload(),
+			  1,
+			  con->get_pub_retain()) ;
+  if (ret != MOSQ_ERR_SUCCESS){
+    pthread_mutex_unlock(&m_mosquittolock) ;
+    con->set_activity(MqttConnection::Activity::none);
+      
+    EPRINT("Mosquitto publish failed with code %d\n", ret);
+    buff[4] = MQTT_RETURN_CONGESTION ;
+    writemqtt(con, MQTT_PUBACK, buff, 5) ;
+    return false ;
+  }
+  DPRINT("Sending Mosquitto publish with mid %d\n", mid) ;
+  con->set_mosquitto_mid(mid) ;
+  pthread_mutex_unlock(&m_mosquittolock) ;
+  
   return true ;
 }
 
@@ -764,7 +763,13 @@ void ServerMqttSnRF24::received_disconnect(uint8_t *sender_address, uint8_t *dat
 
 void ServerMqttSnRF24::initialise(uint8_t address_len, uint8_t *broadcast, uint8_t *address)
 {
-
+  pthread_mutexattr_t attr ;
+  pthread_mutexattr_init(&attr);
+  pthread_mutexattr_settype(&attr, PTHREAD_MUTEX_ERRORCHECK) ;
+  if (pthread_mutex_init(&m_mosquittolock, &attr) != 0){
+    throw RF24Exception("Mosquitto mutex creation failed") ;
+  }
+  
   char szgw[MAX_GW_TXT+1];
   if (!m_mosquitto_initialised) mosquitto_lib_init();
   m_mosquitto_initialised = true ;
@@ -797,16 +802,20 @@ void ServerMqttSnRF24::initialise(uint8_t address_len, uint8_t *broadcast, uint8
 }
 
 void ServerMqttSnRF24::gateway_publish_callback(struct mosquitto *m,
-						    void *data,
-						    int mid)
+						  void *data,
+						  int mid)
 {
-  DPRINT("Mosquitto publish: message id = %d\n", mid) ;
+  DPRINT("Mosquitto publish callback: message id = %d\n", mid) ;
   if (data == NULL) return ;
   
   ServerMqttSnRF24 *gateway = (ServerMqttSnRF24*)data ;
+  // Lock until publish has completed and the mid logged
+  gateway->lock_mosquitto() ;
   MqttConnection *con = gateway->search_mosquitto_id(mid) ;
+  gateway->unlock_mosquitto();
+
   if (!con){
-    EPRINT("Cannot find Mosquitto ID %d", mid) ;
+    EPRINT("Cannot find Mosquitto ID %d\n", mid) ;
     return ;
   }
 
@@ -867,6 +876,7 @@ void ServerMqttSnRF24::send_will(MqttConnection *con)
     if (ret != MOSQ_ERR_SUCCESS){
       EPRINT("Sending WILL: Mosquitto publish failed with code %d\n", ret);
     }
+    DPRINT("Sending Mosquitto WILL publish with mid %d\n", mid) ;
   }
 }
 

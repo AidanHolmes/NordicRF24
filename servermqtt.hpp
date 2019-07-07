@@ -21,7 +21,7 @@
 #include "mqttparams.hpp"
 #include <time.h>
 #include <mosquitto.h>
-
+#include <pthread.h>
 
 class ServerMqttSnRF24 : public MqttSnRF24{
 public:
@@ -69,6 +69,9 @@ public:
   // Handles connections to gateways or to clients. Dispatches queued messages
   // Will return false if a queued message cannot be dispatched.
   bool manage_connections() ;
+
+  void lock_mosquitto(){pthread_mutex_lock(&m_mosquittolock) ;}
+  void unlock_mosquitto(){pthread_mutex_unlock(&m_mosquittolock) ;}
 
 protected:
 
@@ -145,7 +148,9 @@ protected:
   bool m_mosquitto_initialised ;
   uint8_t m_gwid;
   bool m_broker_connected ;
-  bool m_register_all ;  
+  bool m_register_all ;
+  
+  pthread_mutex_t m_mosquittolock ;
 };
 
 
