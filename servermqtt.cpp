@@ -148,6 +148,12 @@ void ServerMqttSnRF24::received_publish(uint8_t *sender_address, uint8_t *data, 
     break;
   case FLAG_QOSN1:
     mosqos = -1 ;
+    break;
+  default:
+    // Fail with an invalid QoS
+    buff[4] = MQTT_RETURN_INVALID_TOPIC ;
+    addrwritemqtt(sender_address, MQTT_PUBACK, buff, 5) ;
+    return ;
   }
   
   DPRINT("PUBLISH: {Flags = %X, QoS = %d, Topic ID = %u, Mess ID = %u\n",
@@ -828,6 +834,9 @@ void ServerMqttSnRF24::gateway_publish_callback(struct mosquitto *m,
   buff[3] = messageid & 0x00FF ; // replicate message id
 
   switch(con->get_pub_qos()){
+  case 0:
+    con->set_activity(MqttConnection::Activity::none);
+    break;
   case 1:
     buff[4] = MQTT_RETURN_ACCEPTED ;
     gateway->writemqtt(con, MQTT_PUBACK, buff, 5) ;

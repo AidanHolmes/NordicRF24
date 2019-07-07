@@ -784,6 +784,8 @@ bool ClientMqttSnRF24::publish(uint8_t qos, uint16_t topicid, uint16_t topictype
   // This publish call will not handle -1 QoS messages
   if (!m_client_connection.is_connected()) return false ;
 
+  if (qos > 2) return false ; // Invalid QoS
+  
   buff[0] = (retain?FLAG_RETAIN:0) |
     (qos==0?FLAG_QOS0:0) |
     (qos==1?FLAG_QOS1:0) |
