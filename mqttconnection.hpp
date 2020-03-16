@@ -15,7 +15,14 @@
 #ifndef __MQTT_CONNECTION
 #define __MQTT_CONNECTION
 
-#include <time.h>
+#ifdef ARDUINO
+ #include <TimeLib.h>
+ #include <arduino.h>
+ #define TIMENOW now()
+#else
+ #include <time.h>
+ #define TIMENOW time(NULL)
+#endif
 #include "mqtttopic.hpp"
 #include "mqttparams.hpp"
 #include "rpinrf24.hpp"
@@ -33,7 +40,7 @@ public:
   MqttConnection() ;
   void update_activity(); // received activity from client or server
   bool send_another_ping() ;
-  void reset_ping(){m_last_ping = time(NULL) ;}
+  void reset_ping(){m_last_ping = TIMENOW ;}
   bool is_asleep(){
     return m_state == State::asleep ;
   }
@@ -42,9 +49,9 @@ public:
   bool client_id_match(const char *sz){return (strcmp(sz, m_szclientid) == 0);}
   const char* get_client_id(){return m_szclientid;}
   State get_state(){return m_state;}
-  void set_state(State s){m_state = s;m_attempts=0;m_lasttry=time(NULL);}
+  void set_state(State s){m_state = s;m_attempts=0;m_lasttry=TIMENOW;}
   Activity get_activity(){return m_activity;}
-  void set_activity(Activity a){m_activity = a;m_attempts=0;m_lasttry=time(NULL);}
+  void set_activity(Activity a){m_activity = a;m_attempts=0;m_lasttry=TIMENOW;}
   bool state_timeout(uint16_t timeout);
   uint16_t state_timeout_count(){return m_attempts;}
   bool is_connected(){

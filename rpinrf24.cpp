@@ -1,4 +1,4 @@
-//   Copyright 2017 Aidan Holmes
+//   Copyright 2020 Aidan Holmes
 
 //   Licensed under the Apache License, Version 2.0 (the "License");
 //   you may not use this file except in compliance with the License.
@@ -16,10 +16,11 @@
 #include "rpinrf24.hpp"
 #include <stdio.h>
 #include <sys/types.h>
-#include <sys/stat.h>
+#ifndef ARDUINO
+ #include <sys/stat.h>
+#endif
 #include <fcntl.h>
 #include <string.h>
-#include "radioutil.h"
 
 #ifndef _BV
 #define _BV(x) 1 << x
@@ -69,60 +70,43 @@
 
 void NordicRF24::interrupt()
 {
-  bool ret = false ;
-  int handled = 0 ;
-  
-  for (std::vector<NordicRF24*>::iterator i = radio_instances.begin(); i != radio_instances.end(); i++){
-    ret = (*i)->read_status() ;
-    if (!ret){
-      DPRINT("Failed to read status in interrupt handler\n") ;
-      continue ; // Cannot handle interrupt if call failed
-    }
-    /*
-    DPRINT("STATUS:\t\tReceived=%s, Transmitted=%s, Max Retry=%s, RX Pipe Ready=%d, Transmit Full=%s\n",
-	   (*i)->has_received_data()?"YES":"NO",
-	   (*i)->has_data_sent()?"YES":"NO",
-	   (*i)->is_at_max_retry_limit()?"YES":"NO",
-	   (*i)->get_pipe_available(),
-	   (*i)->is_transmit_full()?"YES":"NO"
-	   );
-    */
-    if ((*i)->has_received_data()){
-      if ((*i)->data_received_interrupt()) ret = true ;
-    }
-    
-    if((*i)->has_data_sent()){
-      if ((*i)->data_sent_interrupt()) ret = true ;
-    }
-    
-    if ((*i)->is_at_max_retry_limit()){
-      if ((*i)->max_retry_interrupt()) ret = true ;
-    }
-
-    /*
-    if (!(*i)->has_received_data() &&
-	!(*i)->has_data_sent() &&
-	!(*i)->is_at_max_retry_limit()){
-      DPRINT("Other IRQ interrupt\n") ;
-    }
-    */
-    if (ret){
-      // this return can be used to limit the work done
-      // and attempting to call to other instances.
-      // For now this will not be used to limit and all instances will be
-      // notified
-      handled++ ;
-    }
+  NordicRF24 *radio = (NordicRF24*)radio_sigleton ;
+  if (!radio->read_status()){
+    DPRINT("Failed to read status in interrupt handler\n") ;
   }
-  //DPRINT("Interrupt handled %d times\n", handled) ;
-  // Only flush once using the first instance in the registered list
-  // of instances
-  //(*radio_instances.begin())->flushtx() ;
-  pthread_mutex_lock(&(*radio_instances.begin())->m_rwlock) ;  
-  (*radio_instances.begin())->flushrx() ;
-  (*radio_instances.begin())->clear_interrupts() ;
-  pthread_mutex_unlock(&(*radio_instances.begin())->m_rwlock) ;  
+  /*
+  DPRINT("STATUS:\t\tReceived=%s, Transmitted=%s, Max Retry=%s, RX Pipe Ready=%d, Transmit Full=%s\n",
+	 radio_sigleton->has_received_data()?"YES":"NO",
+	 radio_sigleton->has_data_sent()?"YES":"NO",
+	 radio_sigleton->is_at_max_retry_limit()?"YES":"NO",
+	 radio_sigleton->get_pipe_available(),
+	 radio_sigleton->is_transmit_full()?"YES":"NO"
+	 );
+  */
+  if (radio->has_received_data()) radio->data_received_interrupt();
+    
+  if (radio->has_data_sent()) radio->data_sent_interrupt();
+    
+  if (radio->is_at_max_retry_limit()) radio->max_retry_interrupt();
+
+  /*
+  if (!radio_sigleton->has_received_data() &&
+	!radio_sigleton->has_data_sent() &&
+	!radio_sigleton->is_at_max_retry_limit()){
+    DPRINT("Other IRQ interrupt\n") ;
+  }
+  */
+
+#ifndef ARDUINO
+  pthread_mutex_lock(&m_rwlock) ;  
+#endif
+  radio->flushrx() ;
+  radio->clear_interrupts() ;
+#ifndef ARDUINO
+  pthread_mutex_unlock(&m_rwlock) ;  
+#endif
 }
+
 bool NordicRF24::max_retry_interrupt()
 {
   DPRINT("Max retries reached\n") ;
@@ -137,6 +121,7 @@ bool NordicRF24::data_sent_interrupt()
 
 bool NordicRF24::data_received_interrupt()
 {
+  /* EXAMPLE CODE. COMMENT OUT AS WASTE OF MEMORY
   uint8_t buffer[MAX_RXTXBUF+1] ;
 
   uint8_t size = get_rx_data_size(get_pipe_available()) ;
@@ -147,31 +132,30 @@ bool NordicRF24::data_received_interrupt()
     DPRINT(" %X ", buffer[i]) ;
   }
   DPRINT("}\n") ;
-
+*/
   return true;
 }
 
 NordicRF24::NordicRF24()
 {
+#ifndef ARDUINO
   pthread_mutexattr_t attr ;
   pthread_mutexattr_init(&attr);
   pthread_mutexattr_settype(&attr, PTHREAD_MUTEX_ERRORCHECK) ;
   if (pthread_mutex_init(&m_rwlock, &attr) != 0){
-    throw RF24Exception("Mutex creation failed") ;
+    // Should just terminate here as it's a major resource problem
+    EPRINT("Cannot initialise mutex");
+    //exit(0);
   }
-
+#endif
   m_pSPI = NULL ;
   m_pGPIO = NULL ;
+  m_pTimer = NULL;
   m_irq = 0;
   m_ce = 0 ;
   m_auto_update = true ;
-
-  // Support for multi instances but this is theoretical and
-  // not practical since the hardware is a single instance.
-  // Assumes single IRQ being used but multi instances will likely use a
-  // separate IRQ GPIO pin. This just means that interrupts will unnecessarily
-  // be called.
-  radio_instances.push_back(this) ;  
+  
+  radio_sigleton = this ; // Driver needs to be just one instance for interrupt handling
   
   reset_class() ;
 }
@@ -227,7 +211,7 @@ bool NordicRF24::reset_rf24()
 
 void NordicRF24::reset_class()
 {
-  m_transmit_width = 32 ;
+  m_transmit_width = MAX_RXTXBUF ;
   
   m_is_plus = true ;
 
@@ -275,17 +259,12 @@ void NordicRF24::reset_class()
   m_en_dyn_ack = false ;
 
 }
+
 NordicRF24::~NordicRF24()
 {
-  // Support for multi-instances but isn't thread safe or practical since
-  // hardware is a single instance
-  for (std::vector<NordicRF24*>::iterator i= radio_instances.begin(); i != radio_instances.end(); ++i){
-    if (*i == this){
-      radio_instances.erase(i) ;
-      break;
-    }
-  }
+#ifndef ARDUINO
   pthread_mutex_destroy(&m_rwlock) ;  
+#endif
 }
 
 bool NordicRF24::set_gpio(IHardwareGPIO *pGPIO, uint8_t ce, uint8_t irq)
@@ -322,6 +301,12 @@ bool NordicRF24::set_spi(IHardwareSPI *pSPI)
   return m_pSPI != NULL ;
 }
 
+bool NordicRF24::set_timer(IHardwareTimer *pTimer)
+{
+  m_pTimer = pTimer ;
+  return m_pTimer != NULL ;
+}
+
 uint8_t NordicRF24::write_packet(uint8_t *packet)
 {
   uint8_t packet_size = get_transmit_width() ;
@@ -334,7 +319,7 @@ uint8_t NordicRF24::write_packet(uint8_t *packet)
     EPRINT("ce failed to be set high\n") ;
     return 0 ;
   }
-  nano_sleep(0,10000) ; // 10 micro seconds
+  m_pTimer->microSleep(10) ; // 10 micro seconds
   if (!m_pGPIO->output(m_ce, IHardwareGPIO::low)){
     EPRINT("ce failed to be set low\n") ;
     return 0 ;
@@ -354,7 +339,7 @@ uint8_t NordicRF24::get_rx_data_size(uint8_t pipe)
     if (!m_pSPI->read(m_rxbuf, 2)) return 0 ;
     width = *(m_rxbuf + 1) ;
     convert_status(*m_rxbuf) ;
-    if (width > 32){
+    if (width > MAX_RXTXBUF){
       flushrx() ;
       return 0 ; // Corrupt value
     }
@@ -377,7 +362,7 @@ bool NordicRF24::read_payload(uint8_t *buffer, uint8_t len)
   //  return false ;
   //}
 
-  if (buffer == NULL || len > 32){
+  if (buffer == NULL || len > MAX_RXTXBUF){
     EPRINT("read_payload - len too long %u\n", len) ;
     return false ;
   }
@@ -392,6 +377,8 @@ bool NordicRF24::read_payload(uint8_t *buffer, uint8_t len)
     return false ;
   }
   convert_status(*m_rxbuf) ;
+  // Offset the status information byte and write the payload back
+  // to the buffer
   memcpy(buffer, m_rxbuf+1, len) ;
   return true ;
 }
@@ -408,7 +395,7 @@ bool NordicRF24::write_payload(uint8_t *buffer, uint8_t len)
     return false ;
   }
 
-  if (buffer == NULL || len > 32){
+  if (buffer == NULL || len > MAX_RXTXBUF){
     EPRINT("write_payload - no buffer or len out of bounds\n") ;
     return false ;
   }
@@ -455,7 +442,7 @@ bool NordicRF24::write_register(uint8_t addr, const uint8_t *val, uint8_t len)
 
   addr &= addmask ;
   *m_txbuf = addr | RF24_WRITE_REG;
-  if (len >= MAX_RXTXBUF){
+  if (len > MAX_RXTXBUF){
     EPRINT("write_register - len too large at %u\n", len);
     return false ; // too much data
   }
@@ -466,7 +453,7 @@ bool NordicRF24::write_register(uint8_t addr, const uint8_t *val, uint8_t len)
     return false ;
   }
   if (!m_pSPI->read(m_rxbuf, len+1)){
-    EPRINT("read_register - spi read failed\n") ;
+    EPRINT("write_register - spi read failed\n") ;
     return false ;
   }
   convert_status(*m_rxbuf) ;
@@ -787,7 +774,7 @@ bool NordicRF24::get_payload_width(uint8_t pipe, uint8_t *width)
 bool NordicRF24::set_payload_width(uint8_t pipe, uint8_t width)
 {
   if (pipe >= RF24_PIPES) return false ;
-  if (width > 32) return false ;
+  if (width > MAX_RXTXBUF) return false ;
   return write_register(REG_RX_PW_BASE+pipe, &width, 1) ;
 }
 
@@ -938,6 +925,3 @@ uint8_t NordicRF24::get_channel()
   if (!read_register(REG_RF_CH, &reg, 1)) return 0x80 ; // return invalid channel on error
   return reg ;
 }
-
-
-

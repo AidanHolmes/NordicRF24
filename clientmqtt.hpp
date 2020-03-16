@@ -20,8 +20,25 @@
 #include "mqttconnection.hpp"
 #include "mqtttopic.hpp"
 #include "mqttparams.hpp"
-#include <time.h>
+#ifdef ARDUINO
+ #include <TimeLib.h>
+ #include <arduino.h>
+ #define TIMENOW now()
+#else
+ #include <time.h>
+ #define TIMENOW time(NULL)
+#endif
 
+// Callback - bool success, uint8_t return_code, uint8_t gwid
+#define MQTTCONCALLBACK(fn) void (*fn)(bool, uint8_t, uint8_t)
+// Callback - bool sleeping, uint16_t sleep_duration, uint8_t gwid
+#define MQTTDISCALLBACK(fn) void (*fn)(bool, uint16_t, uint8_t)
+// Callback - bool active, uint8_t gwid
+#define MQTTGWCALLBACK(fn) void (*fn)(bool, uint8_t)
+// Callback for publish - bool success, uint8_t return_code, uint16_t topic_id, uint16_t message_id, uint8_t gwid
+#define MQTTPUBCALLBACK(fn) void (*fn)(bool, uint8_t, uint16_t, uint16_t, uint8_t)
+// Callback for registration - bool success, uint8_t return_code, uint16_t topic_id, uint16_t message_id, uint8_t gwid
+#define MQTTREGCALLBACK(fn) void (*fn)(bool, uint8_t, uint16_t, uint16_t, uint8_t)
 
 class ClientMqttSnRF24 : public MqttSnRF24{
 public:
@@ -60,10 +77,12 @@ public:
   bool is_connected(uint8_t gwid) ; // are we connected to this gw?
   bool is_connected() ; // are we connected to any gateway?
   bool is_disconnected() ; // are we disconnected to any gateway?
+#ifndef ARDUINO
   void set_willtopic(const wchar_t *topic, uint8_t qos) ;
+  void set_willmessage(const wchar_t *message) ;
+#endif
   void set_willtopic(const char *topic, uint8_t qos) ;
   void set_willmessage(const uint8_t *message, uint8_t len) ;
-  void set_willmessage(const wchar_t *message) ;
   // TO DO: Protocol also allows update of will messages during connection to server
   
   // Disconnect. Optional sleep duration can be set. If zero then
@@ -114,7 +133,9 @@ public:
 
   // Register a topic with the server. Returns the topic id to use
   // when publishing messages. Returns 0 if the register fails.
+  #ifndef ARDUINO
   uint16_t register_topic(const wchar_t *topic) ;
+  #endif
   uint16_t register_topic(const char *topic) ;
 
   // Handles connections to gateways or to clients. Dispatches queued messages
@@ -133,6 +154,11 @@ public:
 
   bool add_gateway(uint8_t *gateway_address, uint8_t gwid, uint16_t ad_duration, bool perm=false);
 
+  void set_callback_connected(MQTTCONCALLBACK(fn)){m_fnconnected = fn;}
+  void set_callback_disconnected(MQTTDISCALLBACK(fn)){m_fndisconnected = fn;}
+  void set_callback_gwinfo(MQTTGWCALLBACK(fn)){m_fngatewayinfo = fn ;}
+  void set_callback_published(MQTTPUBCALLBACK(fn)){m_fnpublished = fn ;}
+  void set_callback_register(MQTTREGCALLBACK(fn)){m_fnregister = fn ;}
 protected:
 
   // Connection state handling for clients
@@ -173,6 +199,13 @@ protected:
   size_t m_willmessagesize ;
   uint8_t m_willtopicqos ;
   uint16_t m_sleep_duration ;
+  
+  // Callback functions
+  MQTTCONCALLBACK(m_fnconnected);
+  MQTTDISCALLBACK(m_fndisconnected) ;
+  MQTTGWCALLBACK(m_fngatewayinfo) ;
+  MQTTPUBCALLBACK(m_fnpublished) ;
+  MQTTREGCALLBACK(m_fnregister) ;
 };
 
 

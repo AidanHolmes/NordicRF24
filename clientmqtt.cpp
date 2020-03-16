@@ -13,10 +13,12 @@
 //   limitations under the License.
 
 #include "clientmqtt.hpp"
-#include "radioutil.h"
+#include "radioutil.hpp"
 #include <string.h>
 #include <stdio.h>
-#include <wchar.h>
+#ifndef ARDUINO
+ #include <wchar.h>
+#endif
 #include <stdlib.h>
 #include <locale.h>
 
@@ -93,6 +95,12 @@ ClientMqttSnRF24::ClientMqttSnRF24()
   m_willtopicqos = 0;
 
   m_sleep_duration = 0 ;
+  
+  m_fnconnected = NULL ;
+  m_fndisconnected = NULL ;
+  m_fngatewayinfo = NULL ;
+  m_fnpublished = NULL ;
+  m_fnregister = NULL;
 }
 
 ClientMqttSnRF24::~ClientMqttSnRF24()
@@ -104,6 +112,7 @@ ClientMqttSnRF24::~ClientMqttSnRF24()
 void ClientMqttSnRF24::received_puback(uint8_t *sender_address, uint8_t *data, uint8_t len)
 {
   if (len != 5) return ;
+  bool bsuccess = false;
   
   uint16_t topicid = (data[0] << 8) | data[1] ; // Assuming MSB is first
   uint16_t messageid = (data[2] << 8) | data[3] ; // Assuming MSB is first
@@ -120,6 +129,7 @@ void ClientMqttSnRF24::received_puback(uint8_t *sender_address, uint8_t *data, u
   switch(returncode){
   case MQTT_RETURN_ACCEPTED:
     DPRINT("PUBACK: {return code = Accepted}\n") ;
+    bsuccess = true ;
     break ;
   case MQTT_RETURN_CONGESTION:
     DPRINT("PUBACK: {return code = Congestion}\n") ;
@@ -133,6 +143,7 @@ void ClientMqttSnRF24::received_puback(uint8_t *sender_address, uint8_t *data, u
   default:
     DPRINT("PUBACK: {return code = %u}\n", returncode) ;
   }    
+  if (m_fnpublished) (*m_fnpublished)(bsuccess, returncode, topicid, messageid, m_client_connection.get_gwid());
 
 }
 
@@ -203,6 +214,7 @@ void ClientMqttSnRF24::received_unsuback(uint8_t *sender_address, uint8_t *data,
 void ClientMqttSnRF24::received_regack(uint8_t *sender_address, uint8_t *data, uint8_t len)
 {
   if (len != 5) return ;
+  bool bsuccess = false ;
   
   uint16_t topicid = (data[0] << 8) | data[1] ; // Assuming MSB is first
   uint16_t messageid = (data[2] << 8) | data[3] ; // Assuming MSB is first
@@ -219,6 +231,8 @@ void ClientMqttSnRF24::received_regack(uint8_t *sender_address, uint8_t *data, u
     DPRINT("REGACK: {return code = Accepted}\n") ;
     if (!m_client_connection.topics.complete_topic(messageid, topicid)){
       DPRINT("Cannot complete topic %u with messageid %u\n", topicid, messageid) ;
+    }else{
+      bsuccess = true ;
     }
     break ;
   case MQTT_RETURN_CONGESTION:
@@ -237,14 +251,15 @@ void ClientMqttSnRF24::received_regack(uint8_t *sender_address, uint8_t *data, u
     DPRINT("REGACK: {return code = %u}\n", returncode) ;
     m_client_connection.topics.del_topic_by_messageid(messageid) ;
   }
-
+  if (m_fnregister) (*m_fnregister)(bsuccess, returncode, topicid, messageid, m_client_connection.get_gwid());
 }
 
 void ClientMqttSnRF24::received_pingresp(uint8_t *sender_address, uint8_t *data, uint8_t len)
 {
   DPRINT("PINGRESP\n") ;
+#ifndef ARDUINO
   pthread_mutex_lock(&m_rwlock) ;
-
+#endif
   MqttGwInfo *gw = get_gateway_address(sender_address);
   if (gw){
     gw->update_activity() ;
@@ -254,8 +269,9 @@ void ClientMqttSnRF24::received_pingresp(uint8_t *sender_address, uint8_t *data,
       m_client_connection.update_activity() ;
     }
   }
+#ifndef ARDUINO
   pthread_mutex_unlock(&m_rwlock) ;
-
+#endif
 }
 
 void ClientMqttSnRF24::received_pingreq(uint8_t *sender_address, uint8_t *data, uint8_t len)
@@ -281,8 +297,9 @@ void ClientMqttSnRF24::received_advertised(uint8_t *sender_address, uint8_t *dat
   uint16_t duration = (data[1] << 8) | data[2] ; // Assuming MSB is first
   DPRINT("ADVERTISED: {gw = %u, duration = %u}\n", data[0], duration) ;
 
+#ifndef ARDUINO
   pthread_mutex_lock(&m_rwlock) ;
-
+#endif
   // Call update gateway. This returns false if gateway is not known
   if (!update_gateway(sender_address, data[0], duration)){
 
@@ -290,6 +307,8 @@ void ClientMqttSnRF24::received_advertised(uint8_t *sender_address, uint8_t *dat
     bool ret = add_gateway(sender_address, data[0], duration);
     if (!ret){
       DPRINT("Cannot add gateway %u\n", data[0]) ;
+    }else{
+      if (m_fngatewayinfo) (*m_fngatewayinfo)(true, data[0]) ;
     }
   }
 
@@ -298,9 +317,9 @@ void ClientMqttSnRF24::received_advertised(uint8_t *sender_address, uint8_t *dat
       m_client_connection.get_gwid() == data[0]){
     m_client_connection.update_activity() ;
   }
-
+#ifndef ARDUINO
   pthread_mutex_unlock(&m_rwlock) ;
-  
+#endif
 }
 
 bool ClientMqttSnRF24::add_gateway(uint8_t *gateway_address, uint8_t gwid, uint16_t ad_duration, bool perm)
@@ -313,9 +332,11 @@ bool ClientMqttSnRF24::add_gateway(uint8_t *gateway_address, uint8_t gwid, uint1
       m_gwinfo[i].update_activity() ;
       m_gwinfo[i].set_gwid(gwid) ;
       m_gwinfo[i].set_permanent(perm) ;
+      
+      // Do not callback as user should be aware of a manual gateway
 
       if (ad_duration > 0){
-	m_gwinfo[i].advertised(ad_duration) ; 
+        m_gwinfo[i].advertised(ad_duration) ; 
       }
       return true ;
     }
@@ -332,7 +353,7 @@ bool ClientMqttSnRF24::update_gateway(uint8_t *gateway_address, uint8_t gwid, ui
 
       // Only set new duration if not zero. Retain original advertised state
       if (ad_duration > 0){
-	m_gwinfo[i].advertised(ad_duration) ; 
+        m_gwinfo[i].advertised(ad_duration) ; 
       }
 
       return true ;
@@ -360,9 +381,9 @@ void ClientMqttSnRF24::received_gwinfo(uint8_t *sender_address, uint8_t *data, u
   DPRINT("}\n") ;
   
   bool gw_updated = false  ;
-
+#ifndef ARDUINO
   pthread_mutex_lock(&m_rwlock) ;
-
+#endif
   // Reset activity if searching was requested
   if (m_client_connection.get_activity() == MqttConnection::Activity::searching){
     m_client_connection.set_activity(MqttConnection::Activity::none) ;
@@ -380,8 +401,11 @@ void ClientMqttSnRF24::received_gwinfo(uint8_t *sender_address, uint8_t *data, u
     }else{ // No address, but the sender address can be used
       add_gateway(sender_address, data[0], 0);
     }
+    if (m_fngatewayinfo) (*m_fngatewayinfo)(true, data[0]) ;
   }
+#ifndef ARDUINO
   pthread_mutex_unlock(&m_rwlock) ;
+#endif
 
   // It's possible that the gateway cannot be saved if there's already a full list
   // of gateways.
@@ -391,12 +415,15 @@ void ClientMqttSnRF24::received_gwinfo(uint8_t *sender_address, uint8_t *data, u
 
 void ClientMqttSnRF24::received_connack(uint8_t *sender_address, uint8_t *data, uint8_t len)
 {
-
+  bool bsuccess = false ;
+#ifndef ARDUINO
   pthread_mutex_lock(&m_rwlock) ;
-
+#endif
   // Was this client connecting?
   if (m_client_connection.get_state() != MqttConnection::State::connecting){
+#ifndef ARDUINO
     pthread_mutex_unlock(&m_rwlock) ;
+#endif
     return ; // not enabled and expected
   }
   
@@ -414,6 +441,7 @@ void ClientMqttSnRF24::received_connack(uint8_t *sender_address, uint8_t *data, 
   case MQTT_RETURN_ACCEPTED:
     DPRINT("CONNACK: {return code = Accepted}\n") ;
     m_client_connection.set_state(MqttConnection::State::connected);
+    bsuccess = true ;
     break ;
   case MQTT_RETURN_CONGESTION:
     DPRINT("CONNACK: {return code = Congestion}\n") ;
@@ -433,11 +461,14 @@ void ClientMqttSnRF24::received_connack(uint8_t *sender_address, uint8_t *data, 
     // ? Are we connected ?
     m_client_connection.set_state(MqttConnection::State::disconnected); // Cannot connect
   }
+  
+  if (m_fnconnected) (*m_fnconnected) (bsuccess, data[0], m_client_connection.get_gwid()) ;
     
   m_client_connection.set_activity(MqttConnection::Activity::none) ;
     
+#ifndef ARDUINO
   pthread_mutex_unlock(&m_rwlock) ;
-
+#endif
 }
 
 void ClientMqttSnRF24::received_willtopicreq(uint8_t *sender_address, uint8_t *data, uint8_t len)
@@ -509,7 +540,10 @@ void ClientMqttSnRF24::received_disconnect(uint8_t *sender_address, uint8_t *dat
   else
     m_client_connection.set_state(MqttConnection::State::disconnected) ;
   m_client_connection.topics.free_topics() ; // client always forgets topics
-  
+  MqttGwInfo *gwi = get_gateway_address(sender_address);
+  uint8_t gwid = gwi?gwi->get_gwid():0;
+
+  if (m_fndisconnected) (*m_fndisconnected) (m_sleep_duration?true:false, m_sleep_duration, gwid) ;
 }
 
 void ClientMqttSnRF24::set_client_id(const char *szclientid)
@@ -550,6 +584,9 @@ bool ClientMqttSnRF24::manage_gw_connection()
     if (gw){
       gw->set_active(false);
     }
+    // Lost gateway, inform user through callback
+    if (m_fngatewayinfo) (*m_fngatewayinfo)(false, gw->get_gwid()) ;
+    if (m_fndisconnected) (*m_fndisconnected)(false, 0, gw->get_gwid()) ;
     return false;
     
   }else{
@@ -570,11 +607,11 @@ bool ClientMqttSnRF24::manage_connections()
     // Manage connection to gateway. Ensure gateway is still there and connection should be open
     // Function returns false if gateway lost - no need to manage connection
     if (manage_gw_connection()){
-      if (!m_client_connection.get_activity() == MqttConnection::Activity::none){
-	// If connected client is doing anything then manage the connection
-	if (!manage_pending_message(m_client_connection)){
-	  m_client_connection.set_activity(MqttConnection::Activity::none) ;
-	}
+      if (m_client_connection.get_activity() != MqttConnection::Activity::none){
+        // If connected client is doing anything then manage the connection
+        if (!manage_pending_message(m_client_connection)){
+          m_client_connection.set_activity(MqttConnection::Activity::none) ;
+        }
       }
     }
 
@@ -582,19 +619,23 @@ bool ClientMqttSnRF24::manage_connections()
   case MqttConnection::State::connecting:
     if (!manage_pending_message(m_client_connection)){
       m_client_connection.set_state(MqttConnection::State::disconnected) ;
+      // Failed to connect
+      if (m_fnconnected) (*m_fnconnected) (false, MQTT_RETURN_ACCEPTED, m_client_connection.get_gwid()) ;
     }
     break;
   case MqttConnection::State::disconnecting:
     if (!manage_pending_message(m_client_connection)){
       m_client_connection.set_state(MqttConnection::State::disconnected) ;
+      // Disconnect timed out. Inform through callback that the connection should be closed anyway
+      if (m_fndisconnected) (*m_fndisconnected)(false, 0, m_client_connection.get_gwid()) ;
     }
     break ;
   case MqttConnection::State::disconnected:
     // Retry searches if no response.
     if (m_client_connection.get_activity() == MqttConnection::Activity::searching){
       if (!manage_pending_message(m_client_connection)){
-	// No search response, stop searching
-	m_client_connection.set_activity(MqttConnection::Activity::none);
+        // No search response, stop searching
+        m_client_connection.set_activity(MqttConnection::Activity::none);
       }
     }
       
@@ -618,6 +659,8 @@ bool ClientMqttSnRF24::searchgw(uint8_t radius)
   if (addrwritemqtt(m_broadcast, MQTT_SEARCHGW, buff, 1)){
     // Cache the message if disconnected. This changes the connection to use
     // the broadcast address for resending. 
+    // Note that no caching is used if connection is in anyother state than disconnected. 
+    // This is more efficient and prevents overwrite of cache for other 'connected' comms
     if (m_client_connection.get_state() == MqttConnection::State::disconnected){
       m_client_connection.set_address(m_broadcast, m_address_len);
       m_client_connection.set_cache(MQTT_SEARCHGW, buff, 1) ;
@@ -628,39 +671,41 @@ bool ClientMqttSnRF24::searchgw(uint8_t radius)
 
   return false ;
 }
-
+#ifndef ARDUINO
 uint16_t ClientMqttSnRF24::register_topic(const wchar_t *topic)
 {
   char sztopic[MQTT_TOPIC_MAX_BYTES] ;
    
-  try{
-    wchar_to_utf8(topic, sztopic, (unsigned)(MQTT_TOPIC_SAFE_BYTES + (MAX_RF24_ADDRESS_LEN - m_address_len)));
-  }catch(MqttOutOfRange &e){
-    DPRINT("Throwing exception - cannot convert REGISTER topic to UTF-8\n") ;
-    throw ;
-  }
+  wchar_to_utf8(topic, sztopic, (unsigned)(MQTT_TOPIC_SAFE_BYTES + (MAX_RF24_ADDRESS_LEN - m_address_len)));
 
   return register_topic(sztopic) ;
 }
-
+#endif
 uint16_t ClientMqttSnRF24::register_topic(const char *topic)
 {
   uint16_t ret = 0, len = 0 ;
   uint8_t buff[4 + MQTT_TOPIC_MAX_BYTES] ;
 
   if (m_client_connection.is_connected()){
+#ifndef ARDUINO
     pthread_mutex_lock(&m_rwlock) ;
+#endif
     uint16_t mid = m_client_connection.get_new_messageid() ;
     // Register the topic. Return value is zero if topic is new
     ret = m_client_connection.topics.reg_topic(topic, mid) ;
     if(ret > 0){
       DPRINT("reg_topic returned an existing topic ID %u\n", ret) ;
+#ifndef ARDUINO
+      pthread_mutex_unlock(&m_rwlock) ;
+#endif
       return ret ; // already exists
     }
     DPRINT("reg_topic has registered a new topic %u\n", mid) ;
 
     len = strlen(topic) + 1;
+#ifndef ARDUINO
     pthread_mutex_unlock(&m_rwlock) ;
+#endif
     buff[0] = 0 ;
     buff[1] = 0 ; // topic ID set to zero
     buff[2] = mid >> 8 ; // MSB
@@ -670,7 +715,7 @@ uint16_t ClientMqttSnRF24::register_topic(const char *topic)
     if (writemqtt(&m_client_connection, MQTT_REGISTER, buff, 4+len)){
       // Cache the message
       m_client_connection.set_activity(MqttConnection::Activity::registering) ;
-      return 0;
+      return mid; //return the message id
     }
   }
   // Connection timed out or not connected
@@ -741,7 +786,6 @@ bool ClientMqttSnRF24::publish_noqos(uint8_t gwid, uint16_t topicid, uint8_t top
   uint8_t len = payload_len + 5 ;
   if (len > (MQTT_PAYLOAD_WIDTH-7-m_address_len)){
     EPRINT("Payload of %u bytes is too long for publish\n", payload_len) ;
-    throw MqttOutOfRange("PUBLISH payload too long") ;
     return false ;
   }
   memcpy(buff+5,payload, payload_len);
@@ -758,9 +802,11 @@ bool ClientMqttSnRF24::publish_noqos(uint8_t gwid, uint16_t topicid, uint8_t top
       return false ;
     }
   }else if (topictype == FLAG_NORMAL_TOPIC_ID){
-    throw MqttParamErr("QoS -1 cannot support normal topic IDs") ;
+    EPRINT("QoS -1 cannot support normal topic IDs\n") ;
+    return false ;
   }else{
-    throw MqttParamErr("QoS -1 unknown topic type") ;
+    EPRINT("QoS -1 unknown topic type") ;
+    return false ;
   }
   return true ;
 }
@@ -799,7 +845,6 @@ bool ClientMqttSnRF24::publish(uint8_t qos, uint16_t topicid, uint16_t topictype
   uint8_t len = payload_len + 5 ;
   if (len > (MQTT_PAYLOAD_WIDTH-7-m_address_len)){
     EPRINT("Payload of %u bytes is too long for publish\n", payload_len) ;
-    throw MqttOutOfRange("PUBLISH payload too long") ;
     return false ;
   }
   memcpy(buff+5,payload, payload_len);
@@ -808,6 +853,7 @@ bool ClientMqttSnRF24::publish(uint8_t qos, uint16_t topicid, uint16_t topictype
     if (qos > 0) m_client_connection.set_activity(MqttConnection::Activity::publishing);
     // keep a copy for retries. Set the DUP flag for retries
     buff[0] |= FLAG_DUP;
+    m_client_connection.set_cache(MQTT_PUBLISH, buff, len) ;
     return true ;
   }
 
@@ -823,10 +869,14 @@ bool ClientMqttSnRF24::connect(uint8_t gwid, bool will, bool clean, uint16_t kee
   buff[2] = keepalive >> 8 ; // MSB set first
   buff[3] = keepalive & 0x00FF ;
 
+#ifndef ARDUINO
   pthread_mutex_lock(&m_rwlock) ;
+#endif
   if (!(gw = get_gateway(gwid))){
+#ifndef ARDUINO
     pthread_mutex_unlock(&m_rwlock) ;
-    throw MqttConnectErr("Gateway ID unknown") ;
+#endif
+    EPRINT("Gateway ID unknown") ;
     return false ;
   }
   // Copy connection details
@@ -834,10 +884,14 @@ bool ClientMqttSnRF24::connect(uint8_t gwid, bool will, bool clean, uint16_t kee
   m_client_connection.topics.free_topics() ; // clear all topics
   m_client_connection.set_gwid(gwid) ;
   m_client_connection.set_address(gw->get_address(), m_address_len) ;
+#ifndef ARDUINO
   pthread_mutex_unlock(&m_rwlock) ;
+#endif
   
   uint8_t len = strlen(m_szclient_id) ;
-  if (len > MAX_MQTT_CLIENTID) throw MqttOutOfRange("Client ID too long") ;
+  if (len > MAX_MQTT_CLIENTID){
+    len = MAX_MQTT_CLIENTID ; // Client ID is too long. Truncate
+  }
   memcpy(buff+4, m_szclient_id, len) ; // do not copy /0 terminator
 
 #if DEBUG
@@ -914,6 +968,7 @@ void ClientMqttSnRF24::set_willtopic(const char *topic, uint8_t qos)
   m_willtopicqos = qos ;
 }
 
+#ifndef ARDUINO
 void ClientMqttSnRF24::set_willtopic(const wchar_t *topic, uint8_t qos)
 {
   if (topic == NULL){
@@ -923,17 +978,18 @@ void ClientMqttSnRF24::set_willtopic(const wchar_t *topic, uint8_t qos)
   }else{
     size_t len = wcslen(topic) ;
     if (len > (unsigned)(MQTT_TOPIC_SAFE_BYTES + (MAX_RF24_ADDRESS_LEN - m_address_len))){
-      throw MqttOutOfRange("topic too long for payload") ;
+      EPRINT("Will topic too long for payload\n") ;
+      return ;
     }
 
-    // TO DO: use wchar_to_utf8
     size_t ret = wchar_to_utf8(topic, m_willtopic, (MQTT_TOPIC_SAFE_BYTES + (MAX_RF24_ADDRESS_LEN - m_address_len)));
     
     m_willtopicsize = ret ;
     m_willtopicqos = qos ;
   }
 }
-
+#endif
+#ifndef ARDUINO
 void ClientMqttSnRF24::set_willmessage(const wchar_t *message)
 {
   char utf8str[MQTT_MESSAGE_MAX_BYTES+1] ;
@@ -942,7 +998,7 @@ void ClientMqttSnRF24::set_willmessage(const wchar_t *message)
   size_t len = wchar_to_utf8(message, utf8str, maxlen) ;
   set_willmessage((uint8_t*)utf8str, len) ;
 }
-
+#endif
 void ClientMqttSnRF24::set_willmessage(const uint8_t *message, uint8_t len)
 {
   if (message == NULL || len == 0){
@@ -951,7 +1007,7 @@ void ClientMqttSnRF24::set_willmessage(const uint8_t *message, uint8_t len)
   }
   
   if (len > (unsigned)(MQTT_MESSAGE_SAFE_BYTES + (MAX_RF24_ADDRESS_LEN - m_address_len)))
-    throw MqttOutOfRange("WILL message too long for payload") ;
+    return ; //WILL message too long for payload
 
   memcpy(m_willmessage, message, len) ;
 

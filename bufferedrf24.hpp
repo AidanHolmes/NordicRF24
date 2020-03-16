@@ -1,4 +1,4 @@
-//   Copyright 2017 Aidan Holmes
+//   Copyright 2020 Aidan Holmes
 
 //   Licensed under the Apache License, Version 2.0 (the "License");
 //   you may not use this file except in compliance with the License.
@@ -15,45 +15,24 @@
 #ifndef __BUFFERED_NORDIC_RF24
 #define __BUFFERED_NORDIC_RF24
 
-#define RF24_BUFFER_READ 1600
-#define RF24_BUFFER_WRITE 1600
+// 50 read and 50 write packets can be held. 
+// Can be scaled for embedded by changing these macros (should be multiple of 32)
+#define RF24_BUFFER_READ 64
+#define RF24_BUFFER_WRITE 64
 
 #include "rpinrf24.hpp"
-#include <exception>
-
-class BuffMaxRetry : public std::exception{
-public:
-  virtual const char* what() const throw(){
-    return "Max retries reached" ;
-  }
-};
-
-class BuffOverflow : public std::exception{
-public:
-  virtual const char* what() const throw(){
-    return "Buffer exceeded, data lost" ;
-  }
-};
-
-class BuffException : public RF24Exception{
-public:
-  BuffException(const char *sz){
-    do_except("Buffer exception: ", sz) ;
-  }
-} ;
-
-class BuffIOErr : public RF24Exception{
-public:
-  BuffIOErr(const char *sz){
-    do_except("Buff IO Err: ", sz) ;
-  }
-};
 
 class BufferedRF24 : public NordicRF24{
 public:
   BufferedRF24();
   ~BufferedRF24();
 
+  // Additional orchestration for the RF24 driver to simplify the interface
+  // Enable or disable power with correct settling time
+  bool enable_power(bool bPower);
+  // Enable or disable listen mode with correct settling time and CE high
+  bool listen_mode(bool bListen) ;
+  
   // Writes a buffer of data to a receiver. Returns bytes written.
   // Cannot exceed RF24_BUFFER_WRITE length
   // Can throw BuffIOErr or BuffMaxRetry if blocking
@@ -74,12 +53,12 @@ protected:
   virtual bool max_retry_interrupt();
   virtual bool data_sent_interrupt();
 
-  uint8_t m_read_buffer[RF24_PIPES][RF24_BUFFER_READ];
-  uint8_t m_write_buffer[RF24_BUFFER_WRITE];
-  uint16_t m_read_size[RF24_PIPES], m_front_read[RF24_PIPES] ;
-  uint16_t m_write_size, m_front_write ;
+  volatile uint8_t m_read_buffer[RF24_PIPES][RF24_BUFFER_READ];
+  volatile uint8_t m_write_buffer[RF24_BUFFER_WRITE];
+  volatile uint16_t m_read_size[RF24_PIPES], m_front_read[RF24_PIPES] ;
+  volatile uint16_t m_write_size, m_front_write ;
 
-  enStatus m_status ;  
+  volatile enStatus m_status ;  
 };
 
 

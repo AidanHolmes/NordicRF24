@@ -15,7 +15,7 @@ void MqttTopic::set_topic(uint16_t topic, uint16_t messageid, const char *sztopi
   m_topicid = topic ;
   strncpy(m_sztopic, sztopic, MQTT_TOPIC_MAX_BYTES) ;
   m_messageid = messageid ;
-  m_registered_at = time(NULL) ;
+  m_registered_at = TIMENOW ;
 }
 
 void MqttTopic::reset()

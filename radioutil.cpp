@@ -1,4 +1,4 @@
-#include "radioutil.h"
+#include "radioutil.hpp"
 #include <stdio.h>
 #include <errno.h>
 #include <string.h>
@@ -50,7 +50,7 @@ void print_state(NordicRF24 *pRadio)
   printf("]\n");
   
 }
-
+/*
 void nano_sleep(time_t sec, long nano)
 {
   struct timespec ts,trem ;
@@ -61,6 +61,7 @@ void nano_sleep(time_t sec, long nano)
     ts=trem ;
   }
 }
+*/
 
 int straddr_to_addr(const char *str, uint8_t *rf24addr, const unsigned int len)
 {
@@ -96,5 +97,4 @@ void addr_to_straddr(uint8_t *rf24addr, char *szaddress, const uint8_t address_l
     snprintf(p, 3, "%X",rf24addr[i]) ;
     p += 2;
   }
-  p = '\0';
 }

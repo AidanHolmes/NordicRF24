@@ -1,4 +1,4 @@
-//   Copyright 2017 Aidan Holmes
+//   Copyright 2020 Aidan Holmes
 
 //   Licensed under the Apache License, Version 2.0 (the "License");
 //   you may not use this file except in compliance with the License.
@@ -16,14 +16,14 @@
 #define __NORDIC_RF24
 
 #include "hardware.hpp"
-#include <vector>
-#include <exception>
-#include <pthread.h>
+#ifndef ARDUINO
+ #include <pthread.h>
+#endif
 #include <string.h>
 
 #define MAX_RF24_ADDRESS_LEN 5
 #define MIN_RF24_ADDRESS_LEN 3
-#define MAX_RXTXBUF 33
+#define MAX_RXTXBUF 32 // Changed from 33 to 32. Unsure why set 1 byte longer than acutally supported in hardware 
 #define RF24_PIPES 6
 #define RF24_250KBPS 1
 #define RF24_1MBPS 2
@@ -40,30 +40,6 @@
 #define AR_FEAT if(m_auto_update)read_feature()
 #define AW_FEAT if(m_auto_update)write_feature()
 
-const int excptlen = 1024 ;
-
-class RF24Exception : public std::exception{
-public:
-  RF24Exception(){m_remain = excptlen;} ;
-  RF24Exception(const char *szException){
-    do_except("RF24 exception: ", szException) ;
-  }
-  void do_except(const char *szStr, const char *szException){
-    strncpy(m_szException, szStr, excptlen-1) ;
-    int len = strlen(szStr) ;
-    m_remain = excptlen - 1 - len ;
-    strncpy(m_szException+len, szException, m_remain);
-  }
-  virtual const char* what() const throw(){
-    return m_szException ;
-  }
-protected:
-  char m_szException[excptlen];
-  int m_remain ;
-} ;
-
-
-
 class NordicRF24{
 public:
   NordicRF24();
@@ -72,6 +48,8 @@ public:
   // reset of class attributes to reflect this
   bool reset_rf24() ;
   bool set_spi(IHardwareSPI *pSPI);
+  
+  bool set_timer(IHardwareTimer *pTimer) ;
 
   void auto_update(bool update){m_auto_update = update;}
 
@@ -244,21 +222,22 @@ public:
 
   bool flushtx();
   bool flushrx();
-
+static void interrupt() ;
 protected:
   void reset_class() ;
   bool read_register(uint8_t addr, uint8_t *val, uint8_t len);
   bool write_register(uint8_t addr, const uint8_t *val, uint8_t len);
   bool enable_features(bool enable) ; // Should this be public?
   void convert_status(uint8_t status) ;
-  static void interrupt() ;
+  
   virtual bool max_retry_interrupt() ;
   virtual bool data_sent_interrupt() ;
   virtual bool data_received_interrupt() ;
 
   IHardwareSPI *m_pSPI ;
   IHardwareGPIO *m_pGPIO ;
-  uint8_t m_rxbuf[MAX_RXTXBUF], m_txbuf[MAX_RXTXBUF] ;
+  IHardwareTimer *m_pTimer ;
+  uint8_t m_rxbuf[MAX_RXTXBUF+1], m_txbuf[MAX_RXTXBUF+1] ; // Add 1 for register information received and send over serial
   uint8_t m_irq, m_ce;
 
   bool m_auto_update ; 
@@ -305,16 +284,18 @@ protected:
   bool m_en_ack_payload ;
   bool m_en_dyn_ack ;
 
-  uint8_t m_read_buffer[];
+  //uint8_t m_read_buffer[];
 
   uint8_t m_transmit_width ;
-
-  pthread_mutex_t m_rwlock ;  
 
 private:
 
 } ;
 
-static std::vector<NordicRF24*> radio_instances ;
+volatile static NordicRF24* radio_sigleton ;
+#ifndef ARDUINO
+  static pthread_mutex_t m_rwlock ;  
+#endif
+
 
 #endif

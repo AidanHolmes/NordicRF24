@@ -144,6 +144,7 @@ int main(int argc, char **argv)
   // 1 MHz = 1000 KHz
   spi.setSpeed(6000000) ;
   mqtt.set_spi(&spi) ;
+  mqtt.set_timer(&pi) ;
 
   if (!mqtt.set_gpio(&pi, opt_ce, opt_irq)){
     fprintf(stderr, "Failed to initialise GPIO\n") ;

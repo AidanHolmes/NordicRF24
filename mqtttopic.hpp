@@ -3,7 +3,14 @@
 
 #include <stdint.h>
 #include "mqttparams.hpp"
-#include <time.h>
+#ifdef ARDUINO
+ #include <TimeLib.h>
+ #include <arduino.h>
+ #define TIMENOW now()
+#else
+ #include <time.h>
+ #define TIMENOW time(NULL)
+#endif
 
 class MqttTopic{
 public:
@@ -12,7 +19,7 @@ public:
 
   void set_topic(uint16_t topic, uint16_t messageid, const char *sztopic) ;
   void reset() ;
-  bool registration_expired(){return (m_registered_at + m_timeout) < time(NULL);}
+  bool registration_expired(){return (m_registered_at + m_timeout) < TIMENOW;}
   bool is_head(){return !m_prev;}
   uint16_t get_id(){return m_topicid;}
   uint16_t get_message_id(){return m_messageid;}

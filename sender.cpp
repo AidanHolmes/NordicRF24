@@ -189,21 +189,17 @@ int main(int argc, char **argv)
     if (!pi.output(opt_ce, IHardwareGPIO::high)) return EXIT_FAILURE ;
 
     uint8_t buffer[PAYLOAD_WIDTH+1] ;
-    try{
-      for ( ; ; ){
-	// Read a byte buffer, which is the max payload width
-	bytesread = radio.read(buffer, PAYLOAD_WIDTH, 0, opt_block) ;
+    for ( ; ; ){
+      // Read a byte buffer, which is the max payload width
+      bytesread = radio.read(buffer, PAYLOAD_WIDTH, 0, opt_block) ;
 	
-	while(bytesread > 0){
-	  buffer[PAYLOAD_WIDTH] = '\0' ;
-	  fprintf(stdout, "%s", buffer) ;
-	  fflush(stdout) ;
-	  bytesread = radio.read(buffer, PAYLOAD_WIDTH, 0, opt_block) ;
-	}
-	if(!opt_block) sleep(1); // put in a sleep to stop overloading the CPU
+      while(bytesread > 0){
+	buffer[PAYLOAD_WIDTH] = '\0' ;
+	fprintf(stdout, "%s", buffer) ;
+	fflush(stdout) ;
+	bytesread = radio.read(buffer, PAYLOAD_WIDTH, 0, opt_block) ;
       }
-    }catch(BuffIOErr &e){
-      fprintf(stderr, "\n%s\n", e.what()) ;
+      if(!opt_block) sleep(1); // put in a sleep to stop overloading the CPU
     }
   }else if (opt_message){ // Send a message
     // Use the default address if one isn't specified on the command line
@@ -212,14 +208,8 @@ int main(int argc, char **argv)
     if (!radio.set_tx_address(rf24address, addr_width)){printf("failed to set tx address\n"); return EXIT_FAILURE ;}
     if (!radio.set_rx_address(0, rf24address, addr_width)){printf("failed to set tx address\n"); return EXIT_FAILURE ;}
 
-    try{
-      radio.write((uint8_t*)szMessage, strlen(szMessage), opt_block) ;
-      if (!opt_block) sleep(1) ; // sleep to give the transmit a chance
-    }catch(BuffIOErr &e){
-      fprintf(stderr, "%s\n", e.what()) ;
-    }catch(BuffMaxRetry &e){
-      fprintf(stderr, "Message failed to deliver\n") ;
-    }
+    radio.write((uint8_t*)szMessage, strlen(szMessage), opt_block) ;
+    if (!opt_block) sleep(1) ; // sleep to give the transmit a chance
   }
   radio.reset_rf24();
   pi.output(opt_ce, IHardwareGPIO::low);

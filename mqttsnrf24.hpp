@@ -20,43 +20,14 @@
 #include "mqttconnection.hpp"
 #include "mqtttopic.hpp"
 #include "mqttparams.hpp"
-#include <time.h>
-
-
-class MqttException : public RF24Exception{
-public:
-  MqttException(const char *sz){
-    do_except("MQTT exception: ", sz) ;
-  }
-};
-
-class MqttConnectErr : public RF24Exception{
-public:
-  MqttConnectErr(const char *sz){
-    do_except("Connection error: ", sz) ;
-  }
-};
-
-class MqttOutOfRange : public RF24Exception{
-public:
-  MqttOutOfRange(const char *sz){
-    do_except("Out of range: ", sz) ;
-  }
-};
-
-class MqttIOErr : public RF24Exception{
-public:
-  MqttIOErr(const char *sz){
-    do_except("IO Error: ", sz) ;
-  }
-};
-
-class MqttParamErr : public RF24Exception{
-public:
-  MqttParamErr(const char *sz){
-    do_except("Parameter Error: ", sz) ;
-  }
-};
+#ifdef ARDUINO
+ #include <TimeLib.h>
+ #include <arduino.h>
+ #define TIMENOW now()
+#else
+ #include <time.h>
+ #define TIMENOW time(NULL)
+#endif
 
 class MqttMessageQueue{
 public:
@@ -100,7 +71,7 @@ public:
   void advertised(uint16_t t){
     m_advertising = true ;
     m_active = true ;
-    m_ad_time = time(NULL) ;
+    m_ad_time = TIMENOW ;
     m_lastactivity = m_ad_time ; // update activity as well
     m_ad_duration = t ;
   
@@ -110,10 +81,10 @@ public:
 
   //  bool advertised_expired(){
   // // Add 1 min grace
-  // return (m_advertising && time(NULL) > (m_ad_time + m_ad_duration + 60)) ;
+  // return (m_advertising && TIMENOW > (m_ad_time + m_ad_duration + 60)) ;
   //}
   void update_activity(){
-    m_lastactivity = time(NULL);
+    m_lastactivity = TIMENOW;
     m_active = true ;
   }
   bool is_active(){
@@ -121,7 +92,7 @@ public:
 
     if (m_advertising){
       // Add 1 min grace
-      return time(NULL) < m_lastactivity + m_ad_duration + 60;
+      return TIMENOW < m_lastactivity + m_ad_duration + 60;
     } 
 
     return m_active ;
@@ -168,9 +139,10 @@ public:
   MqttSnRF24();
   ~MqttSnRF24() ;
 
+#ifndef ARDUINO
   size_t wchar_to_utf8(const wchar_t *wstr, char *outstr, const size_t maxbytes) ;
   size_t utf8_to_wchar(const char *str, wchar_t *outstr, const size_t maxbytes) ; 
-  
+#endif
   // Powers up and configures addresses. Goes into listen
   // mode
   void initialise(uint8_t address_len, uint8_t *broadcast, uint8_t *address) ;
@@ -240,10 +212,9 @@ protected:
   uint8_t m_address[MAX_RF24_ADDRESS_LEN];
   uint8_t m_address_len ;
 
-  MqttMessageQueue m_queue[MAX_QUEUE] ;
+  volatile MqttMessageQueue m_queue[MAX_QUEUE] ;
   uint8_t m_queue_head ;
 
-  uint16_t m_max_retries ;
   time_t m_Tretry ;
   uint16_t m_Nretry ;
 

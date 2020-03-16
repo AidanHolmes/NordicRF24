@@ -1,6 +1,7 @@
 #include "mqttconnection.hpp"
 #include <stdio.h>
 
+
 #ifdef DEBUG
 #define DPRINT(x,...) fprintf(stdout,x,##__VA_ARGS__)
 #define EPRINT(x,...) fprintf(stderr,x,##__VA_ARGS__)
@@ -38,20 +39,21 @@ MqttConnection::MqttConnection(){
   m_willmessagesize = 0 ;
   m_willtopic[0] = '\0' ;
 }
+
 void MqttConnection::update_activity()
 {
   // received activity from client or server
-  m_lastactivity = time(NULL) ;
+  m_lastactivity = TIMENOW ;
   reset_ping() ;
 }
 
 bool MqttConnection::send_another_ping()
 {
-  return ((m_last_ping + (duration)) < time(NULL)) ;
+  return ((m_last_ping + (duration)) < TIMENOW) ;
 }
 
 bool MqttConnection::state_timeout(uint16_t timeout){
-  if((timeout+m_lasttry) < time(NULL)){m_attempts++; m_lasttry = time(NULL); return true;}
+  if((timeout+m_lasttry) < TIMENOW){m_attempts++; m_lasttry = TIMENOW; return true;}
   else return false ;
 }
 
@@ -66,7 +68,7 @@ bool MqttConnection::lost_contact()
 {
   // Give 5 retries before failing. This mutliplies the time assuming that
   // all pings will be sent timely
-  return ((m_lastactivity + (duration * 5)) < time(NULL)) ;
+  return ((m_lastactivity + (duration * 5)) < TIMENOW) ;
 }
 
 bool MqttConnection::address_match(const uint8_t *addr)

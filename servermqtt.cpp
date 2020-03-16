@@ -86,9 +86,7 @@ ServerMqttSnRF24::ServerMqttSnRF24()
   pthread_mutexattr_t attr ;
   pthread_mutexattr_init(&attr);
   pthread_mutexattr_settype(&attr, PTHREAD_MUTEX_ERRORCHECK) ;
-  if (pthread_mutex_init(&m_mosquittolock, &attr) != 0){
-    throw RF24Exception("Mutex creation failed") ;
-  }
+  pthread_mutex_init(&m_mosquittolock, &attr) ;
 
   m_gwid = 0 ;
 
@@ -207,7 +205,7 @@ void ServerMqttSnRF24::received_publish(uint8_t *sender_address, uint8_t *data, 
     }
     if (ret != MOSQ_ERR_SUCCESS)
       EPRINT("Mosquitto QoS -1 publish failed with code %d\n", ret) ;
-    DPRINT("Sending Mosquitto QoS -1 publish with mid %d\n", mid) ;
+    //DPRINT("Sending Mosquitto QoS -1 publish with mid %d\n", mid) ;
     return ;    
   }
 
@@ -485,13 +483,12 @@ MqttConnection* ServerMqttSnRF24::search_connection(const char *szclientid)
 
 MqttConnection* ServerMqttSnRF24::search_mosquitto_id(int mid)
 {
-  DPRINT("Looking for MID %d\n", mid) ;
   MqttConnection *p = NULL ;
   for(p = m_connection_head; p != NULL; p=p->next){
     DPRINT("Looking for mid %d. Found mid: %d, is connected: %s, activity: %d\n", mid, p->get_mosquitto_mid(), p->is_connected()?"yes":"no", p->get_activity()) ;
     if (p->is_connected() &&
 	p->get_mosquitto_mid() == mid){
-      DPRINT("This connection matches MID\n") ;
+      //DPRINT("This connection matches MID\n") ;
       break;
     }
   }
@@ -773,7 +770,8 @@ void ServerMqttSnRF24::initialise(uint8_t address_len, uint8_t *broadcast, uint8
   pthread_mutexattr_init(&attr);
   pthread_mutexattr_settype(&attr, PTHREAD_MUTEX_ERRORCHECK) ;
   if (pthread_mutex_init(&m_mosquittolock, &attr) != 0){
-    throw RF24Exception("Mosquitto mutex creation failed") ;
+    EPRINT("Mosquitto mutex creation failed\n") ;
+    return ;
   }
   
   char szgw[MAX_GW_TXT+1];
@@ -782,28 +780,31 @@ void ServerMqttSnRF24::initialise(uint8_t address_len, uint8_t *broadcast, uint8
 
   snprintf(szgw, MAX_GW_TXT, "Gateway %u", m_gwid) ;
   m_pmosquitto = mosquitto_new(szgw, false, this) ;
-  if (!m_pmosquitto)
-    throw MqttException("Cannot create new mosquitto instance") ;
+  if (!m_pmosquitto){
+    EPRINT("Cannot create a new mosquitto instance\n") ;
+  }else{
 
-  int ret = mosquitto_connect_async(m_pmosquitto, "localhost", 1883, 60) ;
-  if (ret != MOSQ_ERR_SUCCESS)
-    throw MqttException ("Cannot connect to broker") ;
+    int ret = mosquitto_connect_async(m_pmosquitto, "localhost", 1883, 60) ;
+    if (ret != MOSQ_ERR_SUCCESS){
+      EPRINT("Cannot connect to mosquitto broker\n") ;
+    }
 
-  ret = mosquitto_loop_start(m_pmosquitto) ;
-  if (ret != MOSQ_ERR_SUCCESS)
-    throw MqttException ("Cannot start mosquitto loop") ;
+    ret = mosquitto_loop_start(m_pmosquitto) ;
+    if (ret != MOSQ_ERR_SUCCESS){
+      EPRINT("Cannot start mosquitto loop\n") ;
+    }
 
 #ifdef DEBUG
-  int major, minor, revision ;
-  mosquitto_lib_version(&major, &minor, &revision) ;
-  
-  DPRINT("Mosquitto server connected %d.%d.%d\n", major, minor, revision) ;
+    int major, minor, revision ;
+    mosquitto_lib_version(&major, &minor, &revision) ;
+    
+    DPRINT("Mosquitto server connected %d.%d.%d\n", major, minor, revision) ;
 #endif
   
-  mosquitto_connect_callback_set(m_pmosquitto, gateway_connect_callback) ;
-  mosquitto_disconnect_callback_set(m_pmosquitto, gateway_disconnect_callback);
-  mosquitto_publish_callback_set(m_pmosquitto, gateway_publish_callback) ;
-
+    mosquitto_connect_callback_set(m_pmosquitto, gateway_connect_callback) ;
+    mosquitto_disconnect_callback_set(m_pmosquitto, gateway_disconnect_callback);
+    mosquitto_publish_callback_set(m_pmosquitto, gateway_publish_callback) ;
+  }
   MqttSnRF24::initialise(address_len, broadcast, address);
 }
 
@@ -811,7 +812,6 @@ void ServerMqttSnRF24::gateway_publish_callback(struct mosquitto *m,
 						  void *data,
 						  int mid)
 {
-  DPRINT("Mosquitto publish callback: message id = %d\n", mid) ;
   if (data == NULL) return ;
   
   ServerMqttSnRF24 *gateway = (ServerMqttSnRF24*)data ;
@@ -821,7 +821,7 @@ void ServerMqttSnRF24::gateway_publish_callback(struct mosquitto *m,
   gateway->unlock_mosquitto();
 
   if (!con){
-    EPRINT("Cannot find Mosquitto ID %d\n", mid) ;
+    EPRINT("Cannot find Mosquitto ID %d in any connection. Could be a QoS -1 message\n", mid) ;
     return ;
   }
 
@@ -840,11 +840,9 @@ void ServerMqttSnRF24::gateway_publish_callback(struct mosquitto *m,
   case 1:
     buff[4] = MQTT_RETURN_ACCEPTED ;
     gateway->writemqtt(con, MQTT_PUBACK, buff, 5) ;
-    //con->set_activity(MqttConnection::Activity::none);
     break ;
   case 2:
     gateway->writemqtt(con, MQTT_PUBREC, buff+2, 2) ;
-    //con->set_activity(MqttConnection::Activity::publishing);
     break ;
   default:
     con->set_activity(MqttConnection::Activity::none);
@@ -980,10 +978,10 @@ bool ServerMqttSnRF24::advertise(uint16_t duration)
   buff[0] = m_gwid ;
   buff[1] = duration >> 8 ; // Is this MSB first or LSB first?
   buff[2] = duration & 0x00FF;
-  for(uint16_t retry = 0;retry < m_max_retries+1;retry++){
-    if (addrwritemqtt(m_broadcast, MQTT_ADVERTISE, buff, 3))
-      return true ;
-  }
+
+  if (addrwritemqtt(m_broadcast, MQTT_ADVERTISE, buff, 3))
+    return true ;
+  
   return false ;
 }
 
@@ -1012,8 +1010,8 @@ bool ServerMqttSnRF24::register_topic(MqttConnection *con, MqttTopic *t)
 bool ServerMqttSnRF24::create_predefined_topic(uint16_t topicid, const char *name)
 {
   if (strlen(name) > (unsigned)(MQTT_TOPIC_SAFE_BYTES + (MAX_RF24_ADDRESS_LEN - m_address_len))){
-    DPRINT("Throwing exception - pre-defined topic too long\n") ;
-    throw MqttOutOfRange("Pre-defined topic too long\n") ;
+    EPRINT("Pre-defined topic %s too long\n", name) ;
+    return false ;
   }
   return m_predefined_topics.create_topic(name, topicid) ;
 }
@@ -1022,14 +1020,9 @@ bool ServerMqttSnRF24::create_predefined_topic(uint16_t topicid, const wchar_t *
 {
   char sztopic[MQTT_TOPIC_MAX_BYTES] ;
   
-  try{
-    wchar_to_utf8(name,
-		  sztopic,
-		  (unsigned)(MQTT_TOPIC_SAFE_BYTES + (MAX_RF24_ADDRESS_LEN - m_address_len)));
-  }catch(MqttOutOfRange &e){
-    DPRINT("Throwing exception - cannot convert pre-defined topic to UTF-8\n") ;
-    throw ;
-  }
+  wchar_to_utf8(name,
+		sztopic,
+		(unsigned)(MQTT_TOPIC_SAFE_BYTES + (MAX_RF24_ADDRESS_LEN - m_address_len)));
   
   return m_predefined_topics.create_topic(sztopic, topicid) ;
 }

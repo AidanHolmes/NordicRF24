@@ -80,12 +80,8 @@ void connect(char params[][30], int count)
     pradio->set_willmessage(NULL,0) ;
   }
   
-  try{
-    if (!pradio->connect(gw, will, true, 30)){
-      printf("Connecting to gateway %u\n", gw) ;
-    }
-  }catch(MqttConnectErr &e){
-    printf("Cannot connect: %s\n", e.what()) ;
+  if (!pradio->connect(gw, will, true, 30)){
+    printf("Connecting to gateway %u\n", gw) ;
   }
 }
 

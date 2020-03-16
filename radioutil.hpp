@@ -4,13 +4,15 @@
 #include "rpinrf24.hpp"
 #include <time.h>
 
+
 extern "C"
 {
+
   /* Print to stdout the state of the radio */
   void print_state(NordicRF24 *pRadio);
 
-  /* wraps call to nanosleep */
-  void nano_sleep(time_t sec, long nano) ;
+  /* wraps call to nanosleep - shouldn't be required with use of IHardwareTimer */
+  //void nano_sleep(time_t sec, long nano) ;
 
   /* 
      Convert a hex address string to a byte representation.
@@ -27,6 +29,8 @@ extern "C"
      This is a risky function as memory allocation is unchecked and can easily overflow memory
   */
   void addr_to_straddr(uint8_t *rf24addr, char *szaddress, const uint8_t address_len);
+
 }
+
 
 #endif

@@ -13,8 +13,8 @@ OBJS_MQTTCLIENT = $(SRCS_MQTTCLIENT:.cpp=.o)
 SRCS_MQTTSERVER = mqttserverapp.cpp servermqtt.cpp mqttsnrf24.cpp bufferedrf24.cpp rpinrf24.cpp mqttconnection.cpp mqtttopic.cpp
 OBJS_MQTTSERVER = $(SRCS_MQTTSERVER:.cpp=.o) 
 
-SRCS_CMD = radioutil.c
-OBJS_CMD = $(SRCS_CMD:.c=.o)
+SRCS_CMD = radioutil.cpp
+OBJS_CMD = $(SRCS_CMD:.cpp=.o)
 
 SRCS_PING = pingRF24.cpp rpinrf24.cpp
 OBJS_PING = $(SRCS_PING:.cpp=.o)

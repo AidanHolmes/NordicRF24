@@ -13,10 +13,11 @@
 //   limitations under the License.
 
 #include "mqttsnrf24.hpp"
-#include "radioutil.h"
 #include <string.h>
 #include <stdio.h>
-#include <wchar.h>
+#ifndef ARDUINO
+ #include <wchar.h>
+#endif
 #include <stdlib.h>
 #include <locale.h>
 
@@ -93,7 +94,6 @@ MqttSnRF24::MqttSnRF24()
   }
 
   m_queue_head = 0 ;
-  m_max_retries = 3 ;
 
   m_Tretry = 10; // sec
   m_Nretry = 5 ; // attempts
@@ -115,11 +115,15 @@ bool MqttSnRF24::data_received_interrupt()
   uint8_t packet[MQTT_PAYLOAD_WIDTH] ;
   uint8_t sender_addr[MAX_RF24_ADDRESS_LEN];
 
+#ifndef ARDUINO
   pthread_mutex_lock(&m_rwlock) ;
+#endif
   uint8_t pipe = get_pipe_available();
   
   if (pipe == RF24_PIPE_EMPTY){
+#ifndef ARDUINO
     pthread_mutex_unlock(&m_rwlock) ;
+#endif
     return true ; // no pipe
   }
 
@@ -131,11 +135,15 @@ bool MqttSnRF24::data_received_interrupt()
   
   for ( ; ; ){
     if (is_rx_empty()){
+#ifndef ARDUINO
       pthread_mutex_unlock(&m_rwlock) ;
+#endif
       break ;
     }
     bool ret = read_payload(packet, MQTT_PAYLOAD_WIDTH) ;
+#ifndef ARDUINO
     pthread_mutex_unlock(&m_rwlock) ;
+#endif
     if (!ret){
       m_status = io_err ; // SPI error
       return false ;
@@ -163,7 +171,8 @@ bool MqttSnRF24::data_received_interrupt()
 void MqttSnRF24::initialise(uint8_t address_len, uint8_t *broadcast, uint8_t *address)
 {
   if (address_len > MAX_RF24_ADDRESS_LEN){
-    throw MqttOutOfRange("Address too long") ;
+    EPRINT("Address too long") ;
+    address_len = MAX_RF24_ADDRESS_LEN; // fix to max length, but not really fixing the programming error
   }
   
   if (broadcast) memcpy(m_broadcast, broadcast, address_len) ;
@@ -172,11 +181,15 @@ void MqttSnRF24::initialise(uint8_t address_len, uint8_t *broadcast, uint8_t *ad
   m_address_len = address_len ;
 
   auto_update(true);
-  if (!set_address_width(m_address_len))
-    throw MqttIOErr("cannot set address width") ;
+  if (!set_address_width(m_address_len)){
+    EPRINT("cannot set address width") ;
+    return ;
+  }
 
-  if (!m_pGPIO->output(m_ce, IHardwareGPIO::low))
-    throw MqttIOErr("GPIO error") ;
+  if (!m_pGPIO->output(m_ce, IHardwareGPIO::low)){
+    EPRINT("GPIO error\n") ;
+    return ;
+  }
   
   // User pipe 0 to receive transmitted responses or listen
   // on broadcast address
@@ -189,15 +202,15 @@ void MqttSnRF24::initialise(uint8_t address_len, uint8_t *broadcast, uint8_t *ad
   set_payload_width(1,MQTT_PAYLOAD_WIDTH) ;
 
   if (!set_rx_address(0, m_broadcast, m_address_len)){
-    throw MqttIOErr("Cannot set RX address") ;
+    EPRINT("Cannot set broadcast RX address\n") ;
   }
 
   if (!set_rx_address(1, m_address, m_address_len)){
-    throw MqttIOErr("Cannot set RX address") ;
+    EPRINT("Cannot set RX address\n") ;
   }
 
   power_up(true) ;
-  nano_sleep(0,150000) ; // 150 micro second wait
+  m_pTimer->microSleep(150); // 150 micro second wait
 
   // Everything is a listener by default
   listen_mode() ;
@@ -208,7 +221,7 @@ void MqttSnRF24::shutdown()
 {
   // Drop CE if transition is from listen mode
   if (!m_pGPIO->output(m_ce, IHardwareGPIO::low))
-    throw MqttIOErr("GPIO error") ;
+    EPRINT("GPIO error, cannot shutdown\n") ;
 
   // Power down
   power_up(false) ;
@@ -216,54 +229,77 @@ void MqttSnRF24::shutdown()
 
 void MqttSnRF24::send_mode()
 {
-  if (!m_pGPIO) throw MqttIOErr("GPIO not set") ;
-
+  if (!m_pGPIO){
+    EPRINT("GPIO not set\n") ;
+    return ; // Terminal problem - GPIO interface required
+  }
+#ifndef ARDUINO
   pthread_mutex_lock(&m_rwlock) ;
-
+#endif
   if (!m_pGPIO->output(m_ce, IHardwareGPIO::low)){
+#ifndef ARDUINO
     pthread_mutex_unlock(&m_rwlock) ;
-    throw MqttIOErr("GPIO error") ;
+#endif
+    EPRINT("GPIO error\n") ;
+    return ;
   }
   //flushtx() ;
   //flushrx() ;
   //clear_interrupts() ;
 
   receiver(false);
-  nano_sleep(0,130000) ; // 130 micro second wait
+  m_pTimer->microSleep(130); // 130 micro second wait
 
+#ifndef ARDUINO
   pthread_mutex_unlock(&m_rwlock) ;
+#endif
 }
 
 void MqttSnRF24::listen_mode()
 {
-  if (!m_pGPIO) throw MqttIOErr("GPIO not set") ;
+  if (!m_pGPIO){ 
+    EPRINT("GPIO not set") ;
+    return ;
+  }
 
   //DPRINT("Listening...\n") ;
+#ifndef ARDUINO
   pthread_mutex_lock(&m_rwlock) ;
+#endif
   if (!m_pGPIO->output(m_ce, IHardwareGPIO::low)){
+#ifndef ARDUINO
     pthread_mutex_unlock(&m_rwlock) ;
-    throw MqttIOErr("GPIO error") ;
+#endif
+    EPRINT("GPIO error\n") ;
+    return ; // Terminal problem
   }
 
   // Set pipe 0 to listen on the broadcast address
   if (!set_rx_address(0, m_broadcast, m_address_len)){
+#ifndef ARDUINO
     pthread_mutex_unlock(&m_rwlock) ;
-    throw MqttIOErr("Cannot set RX address") ;
+#endif
+    EPRINT("Cannot set RX address\n") ;
+    return ;
   }
   
   receiver(true);
 
   if (!m_pGPIO->output(m_ce, IHardwareGPIO::high)){
+#ifndef ARDUINO
     pthread_mutex_unlock(&m_rwlock) ;
-    throw MqttIOErr("GPIO error") ;
+#endif
+    EPRINT("GPIO error") ;
+    return ; // Fairly terminal error if GPIO cannot be set
   }
-  nano_sleep(0,130000) ; // 130 micro second wait
+  m_pTimer->microSleep(130); // 130 micro second wait
 
   //flushrx() ;
   //flushtx() ;
   //clear_interrupts() ;
+#ifndef ARDUINO
   pthread_mutex_unlock(&m_rwlock) ;
-
+#endif
 }
 
 void MqttSnRF24::queue_received(const uint8_t *addr,
@@ -271,7 +307,9 @@ void MqttSnRF24::queue_received(const uint8_t *addr,
 				const uint8_t *data,
 				uint8_t len)
 {
+#ifndef ARDUINO
   pthread_mutex_lock(&m_rwlock) ;
+#endif
   m_queue_head++ ;
   if (m_queue_head >= MAX_QUEUE) m_queue_head = 0 ;
 
@@ -279,12 +317,14 @@ void MqttSnRF24::queue_received(const uint8_t *addr,
   // an old entry or set a new one. 
   m_queue[m_queue_head].set = true ;
   m_queue[m_queue_head].messageid = messageid ;
-  memcpy(m_queue[m_queue_head].address, addr, m_address_len) ;
+  memcpy((void*)m_queue[m_queue_head].address, addr, m_address_len) ;
   if (len > 0 && data != NULL)
-    memcpy(m_queue[m_queue_head].message_data, data, len) ;
+    memcpy((void*)m_queue[m_queue_head].message_data, data, len) ;
   m_queue[m_queue_head].message_len = len ;
 
+#ifndef ARDUINO
   pthread_mutex_unlock(&m_rwlock) ;
+#endif
 }
 
 bool MqttSnRF24::manage_pending_message(MqttConnection &con)
@@ -317,127 +357,127 @@ bool MqttSnRF24::dispatch_queue()
       switch(m_queue[queue_ptr].messageid){
       case MQTT_ADVERTISE:
 	// Gateway message received
-	received_advertised(m_queue[queue_ptr].address,
-			    m_queue[queue_ptr].message_data,
+	received_advertised((uint8_t*)m_queue[queue_ptr].address,
+			    (uint8_t*)m_queue[queue_ptr].message_data,
 			    m_queue[queue_ptr].message_len) ;
 	break;
       case MQTT_SEARCHGW:
 	// Message from client to gateway
-	received_searchgw(m_queue[queue_ptr].address,
-			  m_queue[queue_ptr].message_data,
+	received_searchgw((uint8_t*)m_queue[queue_ptr].address,
+			  (uint8_t*)m_queue[queue_ptr].message_data,
 			  m_queue[queue_ptr].message_len) ;
 	break;
       case MQTT_GWINFO:
 	// Sent by gateways, although clients can also respond (not implemented)
-	received_gwinfo(m_queue[queue_ptr].address,
-			m_queue[queue_ptr].message_data,
+	received_gwinfo((uint8_t*)m_queue[queue_ptr].address,
+			(uint8_t*)m_queue[queue_ptr].message_data,
 			m_queue[queue_ptr].message_len) ;
 	
 	break ;
       case MQTT_CONNECT:
-	received_connect(m_queue[queue_ptr].address,
-			 m_queue[queue_ptr].message_data,
+	received_connect((uint8_t*)m_queue[queue_ptr].address,
+			 (uint8_t*)m_queue[queue_ptr].message_data,
 			 m_queue[queue_ptr].message_len) ;
 
 	break ;
       case MQTT_CONNACK:
-	received_connack(m_queue[queue_ptr].address,
-			 m_queue[queue_ptr].message_data,
+	received_connack((uint8_t*)m_queue[queue_ptr].address,
+			 (uint8_t*)m_queue[queue_ptr].message_data,
 			 m_queue[queue_ptr].message_len) ;
 
 	break ;
       case MQTT_WILLTOPICREQ:
-	received_willtopicreq(m_queue[queue_ptr].address,
-			      m_queue[queue_ptr].message_data,
+	received_willtopicreq((uint8_t*)m_queue[queue_ptr].address,
+			      (uint8_t*)m_queue[queue_ptr].message_data,
 			      m_queue[queue_ptr].message_len) ;
 
 	break ;
       case MQTT_WILLTOPIC:
-	received_willtopic(m_queue[queue_ptr].address,
-			   m_queue[queue_ptr].message_data,
+	received_willtopic((uint8_t*)m_queue[queue_ptr].address,
+			   (uint8_t*)m_queue[queue_ptr].message_data,
 			   m_queue[queue_ptr].message_len) ;
 
 	break ;
       case MQTT_WILLMSGREQ:
-	received_willmsgreq(m_queue[queue_ptr].address,
-			    m_queue[queue_ptr].message_data,
+	received_willmsgreq((uint8_t*)m_queue[queue_ptr].address,
+			    (uint8_t*)m_queue[queue_ptr].message_data,
 			    m_queue[queue_ptr].message_len) ;
 
 	break;
       case MQTT_WILLMSG:
-	received_willmsg(m_queue[queue_ptr].address,
-			 m_queue[queue_ptr].message_data,
+	received_willmsg((uint8_t*)m_queue[queue_ptr].address,
+			 (uint8_t*)m_queue[queue_ptr].message_data,
 			 m_queue[queue_ptr].message_len) ;
 
 	break ;
       case MQTT_PINGREQ:
-	received_pingreq(m_queue[queue_ptr].address,
-			 m_queue[queue_ptr].message_data,
+	received_pingreq((uint8_t*)m_queue[queue_ptr].address,
+			 (uint8_t*)m_queue[queue_ptr].message_data,
 			 m_queue[queue_ptr].message_len) ;
 	break ;
       case MQTT_PINGRESP:
-	received_pingresp(m_queue[queue_ptr].address,
-			  m_queue[queue_ptr].message_data,
+	received_pingresp((uint8_t*)m_queue[queue_ptr].address,
+			  (uint8_t*)m_queue[queue_ptr].message_data,
 			  m_queue[queue_ptr].message_len) ;
 	break ;
       case MQTT_DISCONNECT:
-	received_disconnect(m_queue[queue_ptr].address,
-			    m_queue[queue_ptr].message_data,
+	received_disconnect((uint8_t*)m_queue[queue_ptr].address,
+			    (uint8_t*)m_queue[queue_ptr].message_data,
 			    m_queue[queue_ptr].message_len) ;
 	break;
       case MQTT_REGISTER:
-	received_register(m_queue[queue_ptr].address,
-			  m_queue[queue_ptr].message_data,
+	received_register((uint8_t*)m_queue[queue_ptr].address,
+			  (uint8_t*)m_queue[queue_ptr].message_data,
 			  m_queue[queue_ptr].message_len) ;
 	break;
       case MQTT_REGACK:
-	received_regack(m_queue[queue_ptr].address,
-			m_queue[queue_ptr].message_data,
+	received_regack((uint8_t*)m_queue[queue_ptr].address,
+			(uint8_t*)m_queue[queue_ptr].message_data,
 			m_queue[queue_ptr].message_len) ;
 	break ;
       case MQTT_PUBLISH:
-	received_publish(m_queue[queue_ptr].address,
-			 m_queue[queue_ptr].message_data,
+	received_publish((uint8_t*)m_queue[queue_ptr].address,
+			 (uint8_t*)m_queue[queue_ptr].message_data,
 			 m_queue[queue_ptr].message_len) ;
 	break ;
       case MQTT_PUBACK:
-	received_puback(m_queue[queue_ptr].address,
-			m_queue[queue_ptr].message_data,
+	received_puback((uint8_t*)m_queue[queue_ptr].address,
+			(uint8_t*)m_queue[queue_ptr].message_data,
 			m_queue[queue_ptr].message_len) ;
 	break ;
       case MQTT_PUBREC:
-	received_pubrec(m_queue[queue_ptr].address,
-			m_queue[queue_ptr].message_data,
+	received_pubrec((uint8_t*)m_queue[queue_ptr].address,
+			(uint8_t*)m_queue[queue_ptr].message_data,
 			m_queue[queue_ptr].message_len) ;
 	break ;
       case MQTT_PUBREL:
-	received_pubrel(m_queue[queue_ptr].address,
-			m_queue[queue_ptr].message_data,
+	received_pubrel((uint8_t*)m_queue[queue_ptr].address,
+			(uint8_t*)m_queue[queue_ptr].message_data,
 			m_queue[queue_ptr].message_len) ;
 	break ;
       case MQTT_PUBCOMP:
-	received_pubcomp(m_queue[queue_ptr].address,
-			 m_queue[queue_ptr].message_data,
+	received_pubcomp((uint8_t*)m_queue[queue_ptr].address,
+			 (uint8_t*)m_queue[queue_ptr].message_data,
 			 m_queue[queue_ptr].message_len) ;
 	break ;
       case MQTT_SUBSCRIBE:
-	received_subscribe(m_queue[queue_ptr].address,
-			   m_queue[queue_ptr].message_data,
+	received_subscribe((uint8_t*)m_queue[queue_ptr].address,
+			   (uint8_t*)m_queue[queue_ptr].message_data,
 			   m_queue[queue_ptr].message_len) ;
 	break ;
       case MQTT_SUBACK:
-	received_suback(m_queue[queue_ptr].address,
-			m_queue[queue_ptr].message_data,
+	received_suback((uint8_t*)m_queue[queue_ptr].address,
+			(uint8_t*)m_queue[queue_ptr].message_data,
 			m_queue[queue_ptr].message_len) ;
 	break ;
       case MQTT_UNSUBSCRIBE:
-	received_unsubscribe(m_queue[queue_ptr].address,
-			     m_queue[queue_ptr].message_data,
+	received_unsubscribe((uint8_t*)m_queue[queue_ptr].address,
+			     (uint8_t*)m_queue[queue_ptr].message_data,
 			     m_queue[queue_ptr].message_len) ;
 	break ;
       case MQTT_UNSUBACK:
-	received_unsuback(m_queue[queue_ptr].address,
-			  m_queue[queue_ptr].message_data,
+	received_unsuback((uint8_t*)m_queue[queue_ptr].address,
+			  (uint8_t*)m_queue[queue_ptr].message_data,
 			  m_queue[queue_ptr].message_len) ;
 	break ;
 
@@ -445,17 +485,20 @@ bool MqttSnRF24::dispatch_queue()
 	// Not expected message.
 	// This is not a 1.2 MQTT message
 	received_unknown(m_queue[queue_ptr].messageid,
-			 m_queue[queue_ptr].address,
-			 m_queue[queue_ptr].message_data,
+			 (uint8_t*)m_queue[queue_ptr].address,
+			 (uint8_t*)m_queue[queue_ptr].message_data,
 			 m_queue[queue_ptr].message_len) ;
       }
     }
+#ifndef ARDUINO
     pthread_mutex_lock(&m_rwlock) ;
+#endif
     if (!failed) m_queue[queue_ptr].set = false ;
     queue_ptr++;
     if (queue_ptr >= MAX_QUEUE) queue_ptr = 0 ;
+#ifndef ARDUINO
     pthread_mutex_unlock(&m_rwlock) ;
-
+#endif
     if (queue_ptr == m_queue_head) break;
   }
   return ret ;
@@ -478,7 +521,6 @@ bool MqttSnRF24::addrwritemqtt(const uint8_t *address,
 			       const uint8_t *buff,
 			       uint8_t len)
 {
-  bool ret = false ;
   uint8_t send_buff[MQTT_PAYLOAD_WIDTH] ;
   
   // includes the length field and message type
@@ -487,61 +529,71 @@ bool MqttSnRF24::addrwritemqtt(const uint8_t *address,
   //DPRINT("Transmitting...\n") ;
 
   if ((payload_len+m_address_len) > MQTT_PAYLOAD_WIDTH){
-    throw MqttOutOfRange("Payload too long") ;
+    EPRINT("Payload too long") ;
+    return false ;
   }
 
   // Switch to write mode
   send_mode() ;
 
+#ifndef ARDUINO
   pthread_mutex_lock(&m_rwlock) ;
+#endif
 
   if (!set_tx_address(address, m_address_len)){
+#ifndef ARDUINO
     pthread_mutex_unlock(&m_rwlock) ;
-    throw MqttIOErr("Cannot set TX address") ;
+#endif
+    EPRINT("Cannot set TX address\n") ;
+    return false ;
   }
 
   if (!set_rx_address(0, address, m_address_len)){
+#ifndef ARDUINO
     pthread_mutex_unlock(&m_rwlock) ;
-    throw MqttIOErr("Cannot set RX address") ;
+#endif
+    EPRINT("Cannot set RX address\n") ;
+    return false ;
   }
+#ifndef ARDUINO
   pthread_mutex_unlock(&m_rwlock) ;
-
+#endif
   memcpy(send_buff, m_address, m_address_len) ;
   send_buff[0+m_address_len] = payload_len ;
   send_buff[1+m_address_len] = messageid ;
   if (buff != NULL && len > 0)
     memcpy(send_buff+MQTT_HDR_LEN+m_address_len, buff, len) ;
 
-  for(uint16_t retry = 0;retry < m_max_retries+1;retry++){
-    try{
-      // Write a blocking message
-      write(send_buff, payload_len+m_address_len, true) ;
-      ret = true ;
-      break;
-    }
-    catch(BuffIOErr &e){
-      listen_mode() ;
-      throw MqttIOErr(e.what());
-    }
-    catch(BuffMaxRetry &e){
-      nano_sleep(1,0) ;
-    }
+  write(send_buff, payload_len+m_address_len, true) ;
+  enStatus sret = get_status() ;
+  if (sret == io_err){
+    listen_mode();
+    EPRINT("IO Error on addrwritemqtt\n") ;
+    return false ;
+
+  }else if (sret == buff_overflow){
+    EPRINT("Data exceeds buffer size\n") ;
+    return false ;
   }
 
   listen_mode() ;
-  return ret ;
+  return true ;
 }
 
+#ifndef ARDUINO
 size_t MqttSnRF24::wchar_to_utf8(const wchar_t *wstr, char *outstr, const size_t maxbytes)
 {
   size_t len = wcslen(wstr) ;
-  if (len > maxbytes)
-    throw MqttOutOfRange("conversion to utf8 too long") ;
+  if (len > maxbytes){
+    EPRINT("Conversion to UTF8 too long\n");
+    return 0;
+  }
 
   char *curlocale = setlocale(LC_CTYPE, NULL);
   
   if (!setlocale(LC_CTYPE, "en_GB.UTF-8")){
-    throw MqttOutOfRange("cannot set UTF locale") ;
+    EPRINT("Cannot set UTF local to en_GB\n") ;
+    return 0 ;
   }
     
   size_t ret = wcstombs(outstr, wstr, maxbytes) ;
@@ -549,31 +601,33 @@ size_t MqttSnRF24::wchar_to_utf8(const wchar_t *wstr, char *outstr, const size_t
   setlocale(LC_CTYPE, curlocale) ; // reset locale
 
   if (ret < 0){
-    throw MqttOutOfRange("failed to convert wide string to utf8") ;
+    EPRINT("Failed to convert wide string to UTF8\n") ;
   }
   
   return ret ;
 }
+#endif
+#ifndef ARDUINO
 size_t utf8_to_wchar(const char *str, wchar_t *outstr, const size_t maxbytes)
 {
   char *curloc = setlocale(LC_CTYPE, NULL);
   size_t ret = 0;
 
   if (!setlocale(LC_CTYPE, "en_GB.UTF-8")){
-    throw MqttOutOfRange("cannot set UTF8 locale") ;
-
-    ret = mbstowcs(outstr, str, maxbytes) ;
+    EPRINT("Cannot set UTF8 locale en_GB\n") ;
+    return 0;
   }
+
+  ret = mbstowcs(outstr, str, maxbytes) ;
 
   setlocale(LC_CTYPE, curloc) ; // reset locale
   
   if (ret < 0){
-    throw MqttOutOfRange("failed to convert utf8 to wide string") ;
+    EPRINT("Failed to convert utf8 to wide string\n") ;
   }
   
   return ret ;  
 }
 
-
-
+#endif
 
