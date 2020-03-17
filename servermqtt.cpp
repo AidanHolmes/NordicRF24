@@ -13,7 +13,7 @@
 //   limitations under the License.
 
 #include "servermqtt.hpp"
-#include "radioutil.h"
+#include "radioutil.hpp"
 #include <string.h>
 #include <stdio.h>
 #include <wchar.h>

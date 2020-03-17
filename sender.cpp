@@ -16,7 +16,7 @@
 #include "bufferedrf24.hpp"
 #include "wpihardware.hpp"
 #include "spihardware.hpp"
-#include "radioutil.h"
+#include "radioutil.hpp"
 #include <stdio.h>
 #include <unistd.h>
 #include <string.h>
@@ -172,7 +172,7 @@ int main(int argc, char **argv)
   if (opt_message) radio.receiver(false) ;
   
   radio.power_up(true) ;
-  nano_sleep(0,130000) ; // 130 micro seconds
+  pi.microSleep(130) ;// 130 micro seconds
 
   radio.flushrx();
   radio.flushtx();

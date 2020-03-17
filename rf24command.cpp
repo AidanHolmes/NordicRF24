@@ -4,7 +4,7 @@
 #include "rpinrf24.hpp"
 #include "wpihardware.hpp"
 #include "spihardware.hpp"
-#include "radioutil.h"
+#include "radioutil.hpp"
 #include <string.h>
 
 void set_channel(NordicRF24 *r, int channel)

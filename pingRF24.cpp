@@ -209,7 +209,7 @@ void PingRF24::print_summary()
 #include <string.h>
 #include <time.h>
 #include <signal.h>
-#include "radioutil.c"
+#include "radioutil.cpp"
 
 PingRF24 *pradio =NULL ;
 

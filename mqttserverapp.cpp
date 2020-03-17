@@ -14,7 +14,7 @@
 #include "servermqtt.hpp"
 #include "wpihardware.hpp"
 #include "spihardware.hpp"
-#include "radioutil.h"
+#include "radioutil.hpp"
 #include <stdio.h>
 #include <unistd.h>
 #include <string.h>
@@ -174,7 +174,7 @@ int main(int argc, char **argv)
   // Working loop
   for ( ; ; ){
     mqtt.manage_connections() ;
-    nano_sleep(0, 5000000) ; // 5ms wait
+    pi.milliSleep(5); // 5ms wait
   }
 
   mqtt.reset_rf24();
