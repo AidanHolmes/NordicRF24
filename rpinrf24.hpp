@@ -292,9 +292,9 @@ private:
 
 } ;
 
-volatile static NordicRF24* radio_sigleton ;
+volatile extern NordicRF24* radio_singleton ;
 #ifndef ARDUINO
-  static pthread_mutex_t m_rwlock ;  
+  extern pthread_mutex_t m_rwlock ;  
 #endif
 
 

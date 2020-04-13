@@ -68,9 +68,12 @@
 #define EPRINT(x,...)
 #endif
 
+volatile NordicRF24 *radio_singleton = NULL ;
+pthread_mutex_t m_rwlock ;
+
 void NordicRF24::interrupt()
 {
-  NordicRF24 *radio = (NordicRF24*)radio_sigleton ;
+  NordicRF24 *radio = (NordicRF24*)radio_singleton ;
   if (!radio->read_status()){
     DPRINT("Failed to read status in interrupt handler\n") ;
   }
@@ -155,7 +158,7 @@ NordicRF24::NordicRF24()
   m_ce = 0 ;
   m_auto_update = true ;
   
-  radio_sigleton = this ; // Driver needs to be just one instance for interrupt handling
+  radio_singleton = this ; // Driver needs to be just one instance for interrupt handling
   
   reset_class() ;
 }

@@ -116,7 +116,7 @@ uint16_t BufferedRF24::write(uint8_t *buffer, uint16_t length, bool blocking)
     }
   }
 
-  memcpy((void *)m_write_buffer+m_write_size, buffer, len) ;
+  memcpy((void *)(m_write_buffer+m_write_size), buffer, len) ;
   if (m_write_size == 0){
     // Fresh write
     m_status = ok ;
@@ -213,7 +213,7 @@ bool BufferedRF24::data_sent_interrupt()
   // Works for dynamic data packets used in Enhanced Shockburst
   if (size <= packet_size){ 
     memset(rembuf,0,MAX_RXTXBUF) ; // Clear buffer
-    memcpy(rembuf, (void *)m_write_buffer+m_front_write, size) ; // Partial packet write
+    memcpy(rembuf, (void *)(m_write_buffer+m_front_write), size) ; // Partial packet write
 
     ret = write_packet(rembuf) ;
   }else{
@@ -256,7 +256,7 @@ uint16_t BufferedRF24::read(uint8_t *buffer, uint16_t length, uint8_t pipe, bool
 #endif
 
   if (len > 0){
-    memcpy(buffer, (void *)m_read_buffer[pipe]+m_front_read[pipe], len) ;
+    memcpy(buffer, (void *)(m_read_buffer[pipe]+m_front_read[pipe]), len) ;
     m_front_read[pipe] += len ;
   }
   

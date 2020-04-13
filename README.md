@@ -1,6 +1,6 @@
 
 # NordicRF24
-Raspberry Pi RF24L01+ C++ library
+Raspberry Pi & Arduino RF24L01+ C++ library
 
 A Raspberry Pi library for the plus version of the Nordic RF24L01 chip.
 Note that this may work with the non-plus versions, but this is untested. 
@@ -52,12 +52,5 @@ Enable SPIDEV with raspi-config. Enter Advanced and enable SPI.
 ```
 
 ## Why do this?
-I like to get my hands dirty and understand the underlying hardware. I've done this with displays and now I'm trying with a radio device.
-The wheel has been invented with the RF24 class ports to the RPi. The ports I tried to use were more like shoe horned ports using old libraries. I couldn't get them to work and spent so long trying to figure out why that I thought it would be easier to rewrite.
-The rewrite process led to the NordicRF24 base class and I've reused the virtual base class interfaces to abstract the SPI and GPIO implementations.
-
-## To do
-
-* Makefile build
-* Installation of utilities and libraries
-* MQTT-SN protocol to be supported as an inherited class.
+The primary example libraries are built for Arduino and don't back port too well. The polling implementation used in dedicated hardware, doesn't work well in *user land* code running on Linux.
+This implementation uses the interrupt from the RF24 to best effect on all hardware devices. 
