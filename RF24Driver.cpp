@@ -38,8 +38,8 @@ bool RF24Driver::initialise(uint8_t *device, uint8_t *broadcast, uint8_t length)
   set_data_rate(RF24_2MBPS) ;
 
   // Set default payload width
-  BufferedRF24::set_payload_width(0,MAX_RXTXBUF) ;
-  BufferedRF24::set_payload_width(1,MAX_RXTXBUF) ;
+  if (!BufferedRF24::set_payload_width(0,MAX_RXTXBUF))return false ;
+  if (!BufferedRF24::set_payload_width(1,MAX_RXTXBUF)) return false ;
 
   if (!set_rx_address(0, m_broadcast, m_address_len)){
     return false ;
@@ -182,7 +182,7 @@ bool RF24Driver::data_received_interrupt()
 #endif
       break ;
     }
-    bool ret = read_payload(packet, m_payload_width) ;
+    bool ret = read_payload(packet, m_payload_width+m_address_len) ;
 #ifndef ARDUINO
     pthread_mutex_unlock(&m_rwlock) ;
 #endif
@@ -198,7 +198,6 @@ bool RF24Driver::data_received_interrupt()
   return true ;
 
 }
-
 bool RF24Driver::send(const uint8_t *receiver, uint8_t *data, uint8_t len)
 {
   uint8_t send_buff[MAX_RXTXBUF] ;
@@ -229,6 +228,7 @@ bool RF24Driver::send(const uint8_t *receiver, uint8_t *data, uint8_t len)
   memcpy(send_buff, m_device, m_address_len) ;
   if (data != NULL && len > 0)
     memcpy(send_buff+m_address_len, data, len) ;
+
 
   write(send_buff, len+m_address_len, true) ;
   enStatus sret = get_status() ;

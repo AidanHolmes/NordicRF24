@@ -382,6 +382,7 @@ bool NordicRF24::read_payload(uint8_t *buffer, uint8_t len)
   convert_status(*m_rxbuf) ;
   // Offset the status information byte and write the payload back
   // to the buffer
+
   memcpy(buffer, m_rxbuf+1, len) ;
   return true ;
 }
@@ -777,7 +778,7 @@ bool NordicRF24::get_payload_width(uint8_t pipe, uint8_t *width)
 bool NordicRF24::set_payload_width(uint8_t pipe, uint8_t width)
 {
   if (pipe >= RF24_PIPES) return false ;
-  if (width > MAX_RXTXBUF) return false ;
+  if (width > MAX_RXTXBUF) return false ;  
   return write_register(REG_RX_PW_BASE+pipe, &width, 1) ;
 }
 
