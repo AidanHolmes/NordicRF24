@@ -7,6 +7,7 @@ rf24cmd
 rf24ping
 mqttsnserver
 mqttsnclient
+rf24drvtest
 
 # Compiled Object files
 *.slo

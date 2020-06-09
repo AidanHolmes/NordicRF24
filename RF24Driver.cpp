@@ -9,20 +9,34 @@ RF24Driver::RF24Driver()
 
 bool RF24Driver::initialise(uint8_t *device, uint8_t *broadcast, uint8_t length)
 {
-  // Fix addresses to 5 bytes from driver
-  if (length != MAX_RF24_ADDRESS_LEN) return false ;
-  set_address_width(length) ;
   m_address_len = length ;
   memcpy(m_device, device, length) ;
   memcpy(m_broadcast, broadcast, length) ;
 
+  // Check if driver is missing port interfaces
+  if (!m_pGPIO || !m_pSPI) return false ;
+
+  m_pSPI->setCSHigh(false) ;
+  m_pSPI->setMode(0) ;
+  
   auto_update(true) ;
 
   if (!m_pGPIO->output(m_ce, IHardwareGPIO::low)){
     return false ;
   }
+  // Reset device
+  power_up(false);
+  reset_rf24() ;
+  flushtx() ;
+  flushrx() ;
+  // Just using the incoming data ready interrupt
+  set_use_interrupt_data_ready(true);
+  // Not using the data sent or max retry interrupts
+  set_use_interrupt_data_sent(false);
+  set_use_interrupt_max_retry(false);
+  
   m_address_len = length ;
-
+  if (!set_address_width(length)) return false ; // invalid width
   set_retry(15,15);
   // User pipe 0 to receive transmitted responses or listen
   // on broadcast address
@@ -30,16 +44,18 @@ bool RF24Driver::initialise(uint8_t *device, uint8_t *broadcast, uint8_t length)
   // Use pipe 1 for receiving unicast data
   enable_pipe(1, true) ;
 
+  // Don't use ACKs - reduce radio noise and handle in protocol
   set_pipe_ack(0, false) ;
   set_pipe_ack(1, false) ;
-  set_power_level(RF24_0DBM) ;
+  set_power_level(RF24_0DBM) ; // Max power
   crc_enabled(true) ;
   set_2_byte_crc(true) ;
-  set_data_rate(RF24_2MBPS) ;
+  set_data_rate(RF24_2MBPS) ; // Highest speed
 
   // Set default payload width
-  if (!BufferedRF24::set_payload_width(0,MAX_RXTXBUF))return false ;
-  if (!BufferedRF24::set_payload_width(1,MAX_RXTXBUF)) return false ;
+  if (!NordicRF24::set_payload_width(0,MAX_RXTXBUF))return false ;
+  if (!NordicRF24::set_payload_width(1,MAX_RXTXBUF)) return false ;
+  if (!NordicRF24::set_transmit_width(MAX_RXTXBUF)) return false ;
 
   if (!set_rx_address(0, m_broadcast, m_address_len)){
     return false ;
@@ -50,7 +66,7 @@ bool RF24Driver::initialise(uint8_t *device, uint8_t *broadcast, uint8_t length)
   }
 
   power_up(true) ;
-  m_pTimer->microSleep(150) ;
+  m_pTimer->microSleep(1500) ; // 1.5 ms settle
 
   listen_mode() ;
 
@@ -65,6 +81,9 @@ bool RF24Driver::shutdown()
 
   // Power down
   power_up(false) ;
+  flushrx() ;
+  flushtx() ;
+  clear_interrupts() ;
 
   return true ;
 }
@@ -72,8 +91,9 @@ bool RF24Driver::shutdown()
 bool RF24Driver::set_payload_width(uint8_t width)
 {
   if (width > MAX_RXTXBUF - m_address_len) return false ;
-  if (!BufferedRF24::set_payload_width(0,width+m_address_len)) return false ;
-  if (!BufferedRF24::set_payload_width(1,width+m_address_len)) return false ;
+  if (!NordicRF24::set_payload_width(0,width+m_address_len)) return false ;
+  if (!NordicRF24::set_payload_width(1,width+m_address_len)) return false ;
+  if (!NordicRF24::set_transmit_width(width+m_address_len)) return false ;
   m_payload_width = width ;
   return true ;
 }
@@ -133,6 +153,9 @@ bool RF24Driver::listen_mode()
   }
   
   receiver(true);
+  // 130 micro second wait recommended in RF24 spec, but
+  // doesn't work for some versions of Raspberry Pi. 200us works
+  m_pTimer->microSleep(250); 
 
   if (!m_pGPIO->output(m_ce, IHardwareGPIO::high)){
 #ifndef ARDUINO
@@ -140,12 +163,9 @@ bool RF24Driver::listen_mode()
 #endif
     return false; // Fairly terminal error if GPIO cannot be set
   }
-  m_pTimer->microSleep(130); // 130 micro second wait
 
   // Flushing RX & TX and clearing interrupts not required to change to listen mode (or send mode)
-  //flushrx() ;
-  //flushtx() ;
-  //clear_interrupts() ;
+
 #ifndef ARDUINO
   pthread_mutex_unlock(&m_rwlock) ;
 #endif
@@ -156,7 +176,6 @@ bool RF24Driver::listen_mode()
 bool RF24Driver::data_received_interrupt()
 {
   uint8_t packet[MAX_RXTXBUF] ;
-
 #ifndef ARDUINO
   pthread_mutex_lock(&m_rwlock) ;
 #endif
@@ -169,35 +188,24 @@ bool RF24Driver::data_received_interrupt()
     return true ; // no pipe
   }
 
-  // Not using blocking reads for inbound data as everything
-  // is a single packet message
-
-  // The buffered class implements a mutex to control
-  // accessing data between interrupt thread and the data in the class
+  uint8_t size = get_rx_data_size(pipe) ;
   
-  for ( ; ; ){
-    if (is_rx_empty()){
-#ifndef ARDUINO
-      pthread_mutex_unlock(&m_rwlock) ;
-#endif
-      break ;
-    }
-    bool ret = read_payload(packet, m_payload_width+m_address_len) ;
+  while (!is_rx_empty()){
+    bool ret = read_payload(packet, size) ;
 #ifndef ARDUINO
     pthread_mutex_unlock(&m_rwlock) ;
 #endif
     if (!ret){
-      m_status = io_err ; // SPI error
       return false ;
     }
-    
     return (*m_callbackfn)(m_callbackcontext, packet, packet+m_address_len) ;
-         
-  }
-  
-  return true ;
-
+  }  
+#ifndef ARDUINO
+    pthread_mutex_unlock(&m_rwlock) ;
+#endif
+  return false ;
 }
+
 bool RF24Driver::send(const uint8_t *receiver, uint8_t *data, uint8_t len)
 {
   uint8_t send_buff[MAX_RXTXBUF] ;
@@ -225,20 +233,16 @@ bool RF24Driver::send(const uint8_t *receiver, uint8_t *data, uint8_t len)
   pthread_mutex_unlock(&m_rwlock) ;
 #endif
 
+  // Copy address
   memcpy(send_buff, m_device, m_address_len) ;
+  // Copy data
   if (data != NULL && len > 0)
     memcpy(send_buff+m_address_len, data, len) ;
 
+  // No flushing of TX buffer required prior to write
+  write_packet(send_buff) ;
 
-  write(send_buff, len+m_address_len, true) ;
-  enStatus sret = get_status() ;
   listen_mode();
-  if (sret == io_err){
-    return false ;
-
-  }else if (sret == buff_overflow){
-    return false ;
-  }
 
   return true ;
 

@@ -11,6 +11,9 @@ SRCS_LIB = bufferedrf24.cpp rpinrf24.cpp RF24Driver.cpp radioutil.cpp
 H_LIB = $(SRCS_LIB:.cpp=.hpp)
 OBJS_LIB = $(SRCS_LIB:.cpp=.o)
 
+SRCS_DRV = packetdrivertest.cpp RF24Driver.cpp rpinrf24.cpp
+OBJS_DRV = $(SRCS_DRV:.cpp=.o)
+
 SRCS_CMD = radioutil.cpp
 OBJS_CMD = $(SRCS_CMD:.cpp=.o)
 
@@ -26,20 +29,23 @@ OBJS_CMDUTIL = $(SRCS_CMDUTIL:.cpp=.o)
 PINGEXE = rf24ping
 SENDEXE = rf24send
 CMDEXE = rf24cmd
+DRVEXE = rf24drvtest
 ARCHIVE = librf24.a
 
 .PHONY: all
-all: $(PINGEXE) $(SENDEXE) $(CMDEXE) $(ARCHIVE)
+all: $(PINGEXE) $(SENDEXE) $(CMDEXE) $(DRVEXE) $(ARCHIVE)
 
 $(PINGEXE): $(OBJS_PING) libhw
 	$(CXX) $(LDFLAGS) $(OBJS_PING) $(LIBS) -o $@
-
 
 $(SENDEXE): $(OBJS_SEND) $(OBJS_CMD) libhw
 	$(CXX) $(LDFLAGS) $(OBJS_SEND) $(OBJS_CMD) $(LIBS) -o $@
 
 $(CMDEXE): $(OBJS_CMDUTIL) $(OBJS_CMD) libhw
 	$(CXX) $(LDFLAGS) $(OBJS_CMDUTIL) $(OBJS_CMD) $(LIBS) -o $@
+
+$(DRVEXE): $(OBJS_DRV) $(OBJS_CMD) libhw
+	$(CXX) $(LDFLAGS) $(OBJS_DRV) $(OBJS_CMD) $(LIBS) -o $@
 
 $(ARCHIVE): $(OBJS_LIB)
 	ar r $@ $?

@@ -77,28 +77,21 @@ void NordicRF24::interrupt()
   if (!radio->read_status()){
     DPRINT("Failed to read status in interrupt handler\n") ;
   }
-  /*
+
+  /*  
   DPRINT("STATUS:\t\tReceived=%s, Transmitted=%s, Max Retry=%s, RX Pipe Ready=%d, Transmit Full=%s\n",
-	 radio_sigleton->has_received_data()?"YES":"NO",
-	 radio_sigleton->has_data_sent()?"YES":"NO",
-	 radio_sigleton->is_at_max_retry_limit()?"YES":"NO",
-	 radio_sigleton->get_pipe_available(),
-	 radio_sigleton->is_transmit_full()?"YES":"NO"
+	 radio->has_received_data()?"YES":"NO",
+	 radio->has_data_sent()?"YES":"NO",
+	 radio->is_at_max_retry_limit()?"YES":"NO",
+	 radio->get_pipe_available(),
+	 radio->is_transmit_full()?"YES":"NO"
 	 );
-  */
+  */  
   if (radio->has_received_data()) radio->data_received_interrupt();
     
   if (radio->has_data_sent()) radio->data_sent_interrupt();
     
   if (radio->is_at_max_retry_limit()) radio->max_retry_interrupt();
-
-  /*
-  if (!radio_sigleton->has_received_data() &&
-	!radio_sigleton->has_data_sent() &&
-	!radio_sigleton->is_at_max_retry_limit()){
-    DPRINT("Other IRQ interrupt\n") ;
-  }
-  */
 
 #ifndef ARDUINO
   pthread_mutex_lock(&m_rwlock) ;  
@@ -112,13 +105,11 @@ void NordicRF24::interrupt()
 
 bool NordicRF24::max_retry_interrupt()
 {
-  DPRINT("Max retries reached\n") ;
   return true ;
 }
 
 bool NordicRF24::data_sent_interrupt()
 {
-  DPRINT("ACK received\n") ;
   return true ;
 }
 

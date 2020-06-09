@@ -1,5 +1,5 @@
 #include "PacketDriver.hpp"
-#include "bufferedrf24.hpp"
+#include "rpinrf24.hpp"
 
 #ifndef __MQTTSN_RF24_DRIVER
 #define __MQTTSN_RF24_DRIVER
@@ -15,7 +15,7 @@
 #endif
 #define PACKET_DRIVER_MAX_PAYLOAD (MAX_RXTXBUF - MIN_RF24_ADDRESS_LEN)
 
-class RF24Driver : public IPacketDriver, public BufferedRF24{
+class RF24Driver : public IPacketDriver, public NordicRF24{
 public:
   RF24Driver();
 
@@ -23,7 +23,7 @@ public:
   // Once length has been set the it cannot be changed
   bool initialise(uint8_t *device, uint8_t *broadcast, uint8_t length);
   bool shutdown();
-  bool data_received_interrupt();
+  virtual bool data_received_interrupt();
   bool send(const uint8_t *receiver, uint8_t *data, uint8_t len) ;
   bool set_payload_width(uint8_t width);
   uint8_t get_payload_width();
