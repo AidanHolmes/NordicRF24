@@ -5,6 +5,7 @@ RF24Driver::RF24Driver()
   // Use the max address length and set payload to remaining packet size
   m_address_len = PACKET_DRIVER_MAX_ADDRESS_LEN ;
   m_payload_width = MAX_RXTXBUF - PACKET_DRIVER_MAX_ADDRESS_LEN ;
+  m_sendstatus = Status::waiting ;
 }
 
 bool RF24Driver::initialise(uint8_t *device, uint8_t *broadcast, uint8_t length)
@@ -29,11 +30,10 @@ bool RF24Driver::initialise(uint8_t *device, uint8_t *broadcast, uint8_t length)
   reset_rf24() ;
   flushtx() ;
   flushrx() ;
-  // Just using the incoming data ready interrupt
+  // Set all interrupts. This is important as they are used to read and write data
   set_use_interrupt_data_ready(true);
-  // Not using the data sent or max retry interrupts
-  set_use_interrupt_data_sent(false);
-  set_use_interrupt_max_retry(false);
+  set_use_interrupt_data_sent(true);
+  set_use_interrupt_max_retry(true);
   
   m_address_len = length ;
   if (!set_address_width(length)) return false ; // invalid width
@@ -65,8 +65,8 @@ bool RF24Driver::initialise(uint8_t *device, uint8_t *broadcast, uint8_t length)
     return false ;
   }
 
+  m_pTimer->microSleep(5000) ; // 1.5 ms settle
   power_up(true) ;
-  m_pTimer->microSleep(1500) ; // 1.5 ms settle
 
   listen_mode() ;
 
@@ -117,8 +117,12 @@ bool RF24Driver::send_mode()
 #endif
     return false;
   }
-
+  //power_up(false) ;
   receiver(false);
+  //power_up(true) ;
+  //clear_interrupts() ;
+  //flushtx();
+  //flushrx();
   m_pTimer->microSleep(130); // 130 micro second wait
   
 #ifndef ARDUINO
@@ -151,11 +155,15 @@ bool RF24Driver::listen_mode()
 #endif
     return false;
   }
-  
+  //power_up(false) ;
   receiver(true);
+  //power_up(true) ;
+  //clear_interrupts() ;
+  //flushtx();
+  //flushrx();
   // 130 micro second wait recommended in RF24 spec, but
   // doesn't work for some versions of Raspberry Pi. 200us works
-  m_pTimer->microSleep(250); 
+  m_pTimer->microSleep(130); 
 
   if (!m_pGPIO->output(m_ce, IHardwareGPIO::high)){
 #ifndef ARDUINO
@@ -170,6 +178,18 @@ bool RF24Driver::listen_mode()
   pthread_mutex_unlock(&m_rwlock) ;
 #endif
 
+  return true ;
+}
+bool RF24Driver::max_retry_interrupt()
+{
+  flushtx();
+  m_sendstatus = Status::failed ;
+  return true ;
+}
+
+bool RF24Driver::data_sent_interrupt()
+{
+  m_sendstatus = Status::delivered ;
   return true ;
 }
 
@@ -239,11 +259,19 @@ bool RF24Driver::send(const uint8_t *receiver, uint8_t *data, uint8_t len)
   if (data != NULL && len > 0)
     memcpy(send_buff+m_address_len, data, len) ;
 
+  m_sendstatus = Status::waiting ;
   // No flushing of TX buffer required prior to write
   write_packet(send_buff) ;
 
+  // Wait for send status to update or quit after 250 ms
+  for (uint16_t i=0;m_sendstatus == Status::waiting && i < 2500; i++){
+    m_pTimer->microSleep(100) ;
+  }
+  // loop exited after waiting too long. Set ioerr (TO DO: expose this error)
+  if (m_sendstatus == Status::waiting) m_sendstatus = Status::ioerr ;
+  
   listen_mode();
 
-  return true ;
+  return m_sendstatus == Status::delivered ;
 
 }

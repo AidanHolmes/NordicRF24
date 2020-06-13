@@ -24,6 +24,9 @@ public:
   bool initialise(uint8_t *device, uint8_t *broadcast, uint8_t length);
   bool shutdown();
   virtual bool data_received_interrupt();
+  virtual bool max_retry_interrupt() ;
+  virtual bool data_sent_interrupt() ;
+
   bool send(const uint8_t *receiver, uint8_t *data, uint8_t len) ;
   bool set_payload_width(uint8_t width);
   uint8_t get_payload_width();
@@ -35,6 +38,7 @@ protected:
   uint8_t m_device[MAX_RF24_ADDRESS_LEN] ;
   uint8_t m_broadcast[MAX_RF24_ADDRESS_LEN] ;
   uint8_t m_payload_width ;
+  volatile enum Status{waiting, delivered, ioerr, failed} m_sendstatus ;
 private:
   
 };

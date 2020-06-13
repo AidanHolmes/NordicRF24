@@ -69,7 +69,9 @@
 #endif
 
 volatile NordicRF24 *radio_singleton = NULL ;
+#ifndef ARDUINO
 pthread_mutex_t m_rwlock ;
+#endif
 
 void NordicRF24::interrupt()
 {
@@ -313,7 +315,7 @@ uint8_t NordicRF24::write_packet(uint8_t *packet)
     EPRINT("ce failed to be set high\n") ;
     return 0 ;
   }
-  m_pTimer->microSleep(10) ; // 10 micro seconds
+  m_pTimer->microSleep(15) ; // 10 micro seconds
   if (!m_pGPIO->output(m_ce, IHardwareGPIO::low)){
     EPRINT("ce failed to be set low\n") ;
     return 0 ;
