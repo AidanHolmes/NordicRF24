@@ -50,18 +50,6 @@ void print_state(NordicRF24 *pRadio)
   printf("]\n");
   
 }
-/*
-void nano_sleep(time_t sec, long nano)
-{
-  struct timespec ts,trem ;
-  ts.tv_sec = sec ;
-  ts.tv_nsec = nano ;
-
-  while (nanosleep(&ts, &trem) == -1 && errno == EINTR){
-    ts=trem ;
-  }
-}
-*/
 
 int straddr_to_addr(const char *str, uint8_t *rf24addr, const unsigned int len)
 {

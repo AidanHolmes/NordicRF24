@@ -171,6 +171,7 @@ bool RF24Driver::listen_mode()
 #endif
     return false; // Fairly terminal error if GPIO cannot be set
   }
+  m_pTimer->microSleep(4);
 
   // Flushing RX & TX and clearing interrupts not required to change to listen mode (or send mode)
 

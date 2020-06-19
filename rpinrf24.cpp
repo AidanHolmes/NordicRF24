@@ -315,7 +315,7 @@ uint8_t NordicRF24::write_packet(uint8_t *packet)
     EPRINT("ce failed to be set high\n") ;
     return 0 ;
   }
-  m_pTimer->microSleep(15) ; // 10 micro seconds
+  m_pTimer->microSleep(11) ; // more than 10 micro seconds
   if (!m_pGPIO->output(m_ce, IHardwareGPIO::low)){
     EPRINT("ce failed to be set low\n") ;
     return 0 ;
