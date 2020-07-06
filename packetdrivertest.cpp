@@ -133,7 +133,7 @@ int main(int argc, char **argv)
     return 1 ;
   }
   
-  uint8_t broadcast[PACKET_DRIVER_MAX_ADDRESS_LEN] = {0xC2,0xC2,0xC2,0xC2,0xC2} ;
+  uint8_t broadcast[PACKET_DRIVER_MAX_ADDRESS_LEN] = {0xC0,0xC0,0xC0,0xC0,0xC0} ;
 
   radio.set_data_received_callback(&data_received) ;
   if (!radio.initialise(rf24address, broadcast, PACKET_DRIVER_MAX_ADDRESS_LEN)){
