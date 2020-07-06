@@ -5,9 +5,9 @@ ARDUINO_DIR = .
 HW_DIR = ../../hardware
 RF24_DIR = ..
 HWFILES = arduinohardware.cpp arduinohardware.hpp hardware.cpp hardware.hpp PacketDriver.hpp
-RF24FILES = RF24Driver.cpp RF24Driver.hpp rpinrf24.cpp rpinrf24.hpp
+RF24FILES = RF24Driver.cpp RF24Driver.hpp rpinrf24.cpp rpinrf24.hpp radioutil.cpp radioutil.hpp
 
-DRVTEST=drvtest.ino
+DRVTEST=arduino.ino
 
 .PHONY: all source build clean
 
