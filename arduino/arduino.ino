@@ -165,7 +165,8 @@ char recipient_addr[(PACKET_DRIVER_MAX_ADDRESS_LEN*2)+1] ;
 void loop()
 {
   int c ;
-
+  uint8_t packet[MAX_RXTXBUF] ;
+  
   c = Serial.read() ;
   if (c >= 0){
     switch ((char)c){

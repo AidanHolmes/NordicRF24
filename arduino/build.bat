@@ -10,5 +10,5 @@ set DRVTEST=arduino.ino
 for %%I in (%HWFILES%) do copy "%HW_DIR%\%%I" "%ARDUINO_DIR%\%%I"
 for %%I in (%RF24FILES%) do copy "%RF24_DIR%\%%I" "%ARDUINO_DIR%\%%I"
 
-"%ARDUINO_EXE_DIR%\arduino_debug.exe" --upload -v %DRVTEST%
+rem "%ARDUINO_EXE_DIR%\arduino_debug.exe" --upload -v %DRVTEST%
 
