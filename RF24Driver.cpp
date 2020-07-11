@@ -117,12 +117,9 @@ bool RF24Driver::send_mode()
 #endif
     return false;
   }
-  //power_up(false) ;
+
   receiver(false);
-  //power_up(true) ;
-  //clear_interrupts() ;
-  //flushtx();
-  //flushrx();
+
   m_pTimer->microSleep(130); // 130 micro second wait
   
 #ifndef ARDUINO
@@ -155,14 +152,9 @@ bool RF24Driver::listen_mode()
 #endif
     return false;
   }
-  //power_up(false) ;
   receiver(true);
-  //power_up(true) ;
-  //clear_interrupts() ;
-  //flushtx();
-  //flushrx();
-  // 130 micro second wait recommended in RF24 spec, but
-  // doesn't work for some versions of Raspberry Pi. 200us works
+
+  // 130 micro second wait recommended in RF24 spec
   m_pTimer->microSleep(130); 
 
   if (!m_pGPIO->output(m_ce, IHardwareGPIO::high)){

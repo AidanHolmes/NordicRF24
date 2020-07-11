@@ -684,7 +684,7 @@ bool NordicRF24::read_observe(uint8_t &packets_lost, uint8_t &retransmitted)
 bool NordicRF24::carrier_detect(bool &cd)
 {
   uint8_t reg = 0 ;
-  if (read_register(REG_CD, &reg, 1)) return false ;
+  if (!read_register(REG_CD, &reg, 1)) return false ;
   cd = ((_BV(0) & reg) > 0);
   return true ;
 }

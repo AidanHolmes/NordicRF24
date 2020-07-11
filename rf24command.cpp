@@ -36,13 +36,69 @@ void print_info(NordicRF24 *pRadio)
   printf("TX reuse:\t%s\n", pRadio->is_tx_reuse()?"yes":"no") ;
 }
 
+void scan_channels(NordicRF24 *r, IHardwareTimer *t, IHardwareGPIO *g, int ce)
+{
+  const int columns = 10 ;
+  const int max_channel = 126;
+  const int retries = 99 ;
+  int col = 0, signal_count = 0;
+  uint8_t original_channel = 0;
+  bool cd ;
+  // Read current channel
+  original_channel = r->get_channel() ;
+  
+  // Setup radio to receive
+  r->power_up(true) ;
+  r->receiver(true) ;
+  t->microSleep(130) ;
+
+  printf("CHAN\t") ;
+  //for (col=0; col < columns; col++) printf("%02X\t", (127*col)/columns) ;
+  for (col=0; col < columns; col++) printf("%02X\t", col) ;
+  printf("\n====\t") ;
+  for (col=0; col < columns; col++) printf("==\t") ;
+  printf("\n") ;
+  col = 0;
+  for (unsigned int chan=0; chan <= max_channel; chan++){
+    if (col == 0) printf("%02X =\t", chan);
+
+    signal_count = 0;
+    for (int j=0; j < retries; j++){
+      r->set_channel(chan) ;
+      g->output(ce, IHardwareGPIO::high) ;
+      t->microSleep(174) ; // Tstby2a +Tdelay_AGC
+      g->output(ce, IHardwareGPIO::low) ;
+      t->microSleep(4);
+      r->carrier_detect(cd);
+      if (cd) signal_count++ ;
+    }
+    if (signal_count == 0){
+      printf("--\t") ;
+    }else{
+      //printf("CD\t") ;
+      printf("%02d\t", signal_count) ;
+    }
+
+    col++;
+    if (col >= columns){
+      col = 0 ;
+      printf("\n") ;
+    }
+  }
+  printf("\n") ;
+  // Rest channel
+  r->set_channel(original_channel) ;
+  g->output(ce, IHardwareGPIO::low);
+  r->power_up(false) ;
+}
+
 int main(int argc, char *argv[])
 {
   const char usage[] = "Usage: %s -c ce [-r] [-o channel] [-p]\n" ;
-  int opt = 0, reset = 0, print = 0, info = 0;
+  int opt = 0, reset = 0, print = 0, info = 0, scan=0;
   int ce = 0, chan = -1 ;
   
-  while ((opt = getopt(argc, argv, "o:pric:")) != -1) {
+  while ((opt = getopt(argc, argv, "o:prisc:")) != -1) {
     switch (opt) {
     case 'r': // reset
       reset = 1;
@@ -56,6 +112,9 @@ int main(int argc, char *argv[])
     case 'i':
       info = 1 ;
       break;
+    case 's':
+      scan = 1;
+      break ;
     case 'c': // CE pin
       ce = atoi(optarg) ;
       break ;
@@ -90,6 +149,7 @@ int main(int argc, char *argv[])
   }
   
   radio.set_spi(&spi) ;
+  radio.set_timer(&pi) ;
   radio.auto_update(true);
   
   if (reset){
@@ -110,6 +170,9 @@ int main(int argc, char *argv[])
   if (info){
     if (print) printf("\n\n") ;
     print_info(&radio);
+  }
+  if (scan){
+    scan_channels(&radio, &pi, &pi, ce) ;
   }
   
   return EXIT_SUCCESS;
